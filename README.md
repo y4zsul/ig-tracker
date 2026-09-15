@@ -6,7 +6,9 @@ following over time**, and dates each new follow to when it was spotted.
 No build step, no dependencies, no account, no server. Load the folder into
 Chrome and it works.
 
-> **Install instructions for non-developers are in [INSTALL.md](INSTALL.md).**
+> **Just want to use it?**
+> [Download the zip](https://github.com/y4zsul/ig-tracker/raw/main/download/stalk-that-hoe.zip),
+> then follow [INSTALL.md](INSTALL.md) — about a minute, no tools needed.
 
 ## What it can and cannot do
 
