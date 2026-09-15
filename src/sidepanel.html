@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Stalk That Hoe!</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <!-- ── home ─────────────────────────────────────────────────────────── -->
+    <section id="screenHome" class="screen home">
+      <h1>Let's stalk that hoe! <span class="h1-emoji">🤪</span></h1>
+      <button id="newStalkBtn" class="big primary">Start a new stalk</button>
+      <button id="monitorBtn" class="big">Monitor a user</button>
+      <p class="fine">
+        A first capture records who someone follows right now. Every capture after that
+        reveals who they have added since — dated to when you checked.
+      </p>
+    </section>
+
+    <!-- ── new stalk ────────────────────────────────────────────────────── -->
+    <section id="screenNew" class="screen" hidden>
+      <div class="bar">
+        <div class="row">
+          <button class="back" data-home title="Back">&#8592;</button>
+          <strong class="grow">New stalk</strong>
+        </div>
+        <div class="row">
+          <input
+            id="username"
+            class="grow"
+            type="text"
+            placeholder="username"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="row">
+          <select id="kind" class="grow" aria-label="List type">
+            <option value="following">Following</option>
+            <option value="followers">Followers</option>
+          </select>
+          <select id="speed" class="grow" aria-label="Pacing">
+            <option value="safe">Safe</option>
+            <option value="fast">Fast</option>
+            <option value="max">Max</option>
+          </select>
+          <button id="startBtn" class="primary">Start stalk</button>
+          <button id="resumeBtn" class="primary" hidden>Resume</button>
+          <button id="stopBtn" hidden>Stop</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── monitor ──────────────────────────────────────────────────────── -->
+    <section id="screenMon" class="screen" hidden>
+      <div class="bar">
+        <div class="row">
+          <button class="back" data-home title="Back">&#8592;</button>
+          <select id="trackSelect" class="grow" aria-label="Watched account"></select>
+          <button id="monDeleteBtn" class="icon danger" title="Stop watching / delete history">
+            &#10005;
+          </button>
+        </div>
+        <div class="row check-row">
+          <button id="checkBtn" class="primary grow big-action">Check now</button>
+          <button id="monStopBtn" hidden>Stop</button>
+        </div>
+        <div id="monCounts" class="counts" hidden></div>
+      </div>
+    </section>
+
+    <!-- ── shared activity strip ────────────────────────────────────────── -->
+    <div id="activity" class="bar activity" hidden>
+      <div id="progress" class="progress" hidden><div id="progressBar"></div></div>
+      <div id="status" class="status"></div>
+      <div id="alert" class="alert" hidden></div>
+      <div id="doneMsg" class="done" hidden></div>
+    </div>
+
+    <!-- ── results: flat alphabetical list (virtualised) ────────────────── -->
+    <div id="viewport" class="viewport" tabindex="0" hidden>
+      <div id="spacer" class="spacer"><div id="rows" class="rows"></div></div>
+    </div>
+
+    <!-- ── results: grouped arrivals ────────────────────────────────────── -->
+    <div id="monList" class="viewport grouplist" hidden></div>
+
+    <div id="empty" class="empty" hidden></div>
+
+    <!-- ── greeting ─────────────────────────────────────────────────────── -->
+    <!-- Hidden by default so returning users never get a flash of pink before
+         the first-run check comes back from storage. -->
+    <div id="greeting" class="greeting" aria-live="polite" hidden>
+      <div id="confetti" class="confetti" aria-hidden="true"></div>
+      <div class="greeting-card">
+        I love you Hawraa,<br />have fun stalking! 💖
+      </div>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
