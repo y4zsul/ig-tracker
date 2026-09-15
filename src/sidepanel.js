@@ -40,8 +40,6 @@ const els = {
   status: $('status'),
   alert: $('alert'),
   doneMsg: $('doneMsg'),
-  greeting: $('greeting'),
-  confetti: $('confetti'),
 
   ver: $('ver'),
   viewport: $('viewport'),
@@ -633,72 +631,6 @@ async function resume() {
   render();
 }
 
-// --- greeting ----------------------------------------------------------------
-
-// Saturated enough to read against the light pink ground.
-const CONFETTI_COLORS = ['#e0357f', '#c13584', '#ff8fc0', '#fcaf45', '#7a5cf0', '#ff5f8d'];
-
-const GREETED_KEY = 'greetedAt';
-
-/**
- * The greeting is a one-time thing: first ever open of the extension, never
- * again. The flag lives in chrome.storage.local, which survives browser
- * restarts, and is deliberately not touched by "clear all" — wiping captured
- * data should not resurrect the welcome.
- */
-async function maybeGreet() {
-  let seen = false;
-  try {
-    const got = await chrome.storage.local.get(GREETED_KEY);
-    seen = !!(got && got[GREETED_KEY]);
-  } catch (_) {
-    // Storage unreadable (shouldn't happen with the storage permission). Fail
-    // toward showing it rather than silently swallowing a first run.
-    seen = false;
-  }
-  if (seen) return;
-
-  // Written before the animation, not after, so closing the panel mid-greeting
-  // still counts as having seen it.
-  try {
-    await chrome.storage.local.set({ [GREETED_KEY]: Date.now() });
-  } catch (_) {}
-
-  playGreeting();
-}
-
-function playGreeting() {
-  els.greeting.hidden = false;
-  const reduced =
-    window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  if (!reduced) {
-    const frag = document.createDocumentFragment();
-    // Staggered across the whole hold so it keeps falling rather than
-    // finishing in the first second and leaving a static screen.
-    for (let i = 0; i < 90; i++) {
-      const bit = document.createElement('span');
-      const size = 7 + Math.random() * 9;
-      bit.style.left = `${Math.random() * 100}%`;
-      bit.style.width = `${size}px`;
-      bit.style.height = `${size * (0.5 + Math.random())}px`;
-      bit.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
-      bit.style.animationDelay = `${Math.random() * 4}s`;
-      bit.style.animationDuration = `${2.2 + Math.random() * 1.8}s`;
-      bit.style.setProperty('--spin', `${Math.random() * 900 - 450}deg`);
-      if (Math.random() < 0.35) bit.style.borderRadius = '50%';
-      frag.append(bit);
-    }
-    els.confetti.append(frag);
-  }
-
-  setTimeout(() => els.greeting.classList.add('fading'), 5200);
-  setTimeout(() => {
-    els.greeting.hidden = true;
-    els.confetti.textContent = ''; // stop the animations once it is gone
-  }, 6400);
-}
-
 // --- events ------------------------------------------------------------------
 
 els.newStalkBtn.addEventListener('click', async () => {
@@ -768,7 +700,6 @@ try {
   els.ver.textContent = `v${chrome.runtime.getManifest().version}`;
 } catch (_) {}
 
-maybeGreet();
 show('home');
 loadState();
 loadTracks();

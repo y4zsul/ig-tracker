@@ -127,15 +127,8 @@ what it collected and can be resumed from its last offset.
 Automated collection can conflict with Instagram's terms of service, and a
 temporary action block is a real possibility. That's your call to make.
 
-## Customising the welcome message
+## Contributing
 
-The first-ever open shows a full-screen greeting. It's hardcoded in
-`src/sidepanel.html` (search for `greeting-card`) and shown once, gated on a
-`greetedAt` flag in `chrome.storage.local`. Change or delete it before sharing
-if it isn't meant for whoever installs this.
-
-To see it again while testing, run this in the side panel's DevTools console:
-
-```js
-chrome.storage.local.remove('greetedAt')
-```
+There's no build step and no toolchain. Edit the files, hit reload on
+`chrome://extensions`, and refresh your Instagram tab — the content scripts
+inject at `document_start`, so the tab must reload for changes to take effect.
