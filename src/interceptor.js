@@ -183,12 +183,19 @@
   /** Keeps the fields the UI needs plus the untouched server object. */
   function normaliseUser(u) {
     const pk = u.pk != null ? u.pk : u.pk_id != null ? u.pk_id : u.id;
+    // friendship_status is relative to the logged-in viewer. When the server
+    // includes `followed_by`, follow-back status is readable straight off the
+    // following list — no followers walk, which matters because the followers
+    // endpoint cannot be reliably enumerated to the end.
+    const fs = u.friendship_status && typeof u.friendship_status === 'object' ? u.friendship_status : null;
     return {
       pk: pk != null ? String(pk) : '',
       username: typeof u.username === 'string' ? u.username : '',
       fullName: typeof u.full_name === 'string' ? u.full_name : '',
       isPrivate: !!u.is_private,
       isVerified: !!u.is_verified,
+      followsYou: fs && typeof fs.followed_by === 'boolean' ? fs.followed_by : null,
+      youFollow: fs && typeof fs.following === 'boolean' ? fs.following : null,
       raw: u,
     };
   }
@@ -819,10 +826,11 @@
     const run = { id: cmd.runId, aborted: false };
     activeRun = run;
 
-    // Measured server-side caps: /following/ honours count=200, /followers/ is
-    // pinned to 25 no matter what you ask for.
-    const cap = cmd.kind === 'followers' ? 25 : 200;
-    const pageSize = Math.min(cap, Math.max(10, cmd.pageSize || 50));
+    // Ask for the full page size on both sides and let the server cap it.
+    // /followers/ has been measured at 25 regardless, but hard-coding that
+    // locally guarantees the slow path even if the cap ever lifts — and the
+    // served size is reported back either way.
+    const pageSize = Math.min(200, Math.max(10, cmd.pageSize || 50));
     // `|| default` would turn a deliberate 0 delay back into 1500.
     const baseDelay = Math.max(0, cmd.delayMs == null ? 1500 : cmd.delayMs);
     const maxUsers = cmd.maxUsers || 100000;
@@ -906,6 +914,9 @@
       let quiet = 0;
       let lastUnion = -1;
       let reachedEnd = false;
+      // Per-pass, since every pass legitimately revisits the same cursors.
+      let seenCursors = new Set();
+      let tokenCursor = false;
 
       for (;;) {
         if (run.aborted) {
@@ -950,13 +961,35 @@
           throw e;
         }
 
-        // Instagram refuses some accounts' lists outright. This must never be
-        // rendered as "they follow nobody".
-        if (json && json.special_empty_state) {
-          throw new Halt('Instagram will not serve this list to anyone.', 'restricted');
+        const parsed = extractUsers(json);
+
+        // Instagram's "this list is hidden" flag. It must never read as "they
+        // follow nobody" — but only treat it as a refusal when the page is
+        // genuinely empty, since the flag can ride along with real rows.
+        if (json && json.special_empty_state && (!parsed || !parsed.users.length)) {
+          if (unionSet.size > 0) {
+            // Mid-walk: keep everything already collected rather than throwing
+            // the whole capture away. Finish the run here — breaking out of the
+            // loop without this would leave it stuck reporting "running".
+            post({
+              type: 'collect:done',
+              runId: run.id,
+              reason: 'restricted',
+              pages: pageIndex,
+              total,
+              passes: pass + 1,
+              reachedEnd: false,
+            });
+            return;
+          }
+          throw new Halt(
+            "Instagram won't show this list. That usually means the account is private and you " +
+              'do not follow them, or they have restricted who can see it. Following an account ' +
+              'you can already see works normally.',
+            'restricted'
+          );
         }
 
-        const parsed = extractUsers(json);
         if (!parsed) throw new Halt('Response had no user list — the endpoint shape changed.', 'parse');
 
         const users = parsed.users.map(normaliseUser);
@@ -978,33 +1011,55 @@
 
         pageIndex++;
 
-        // next_max_id here is a positional OFFSET ("200", "400"), not an opaque
-        // cursor, and there is no has_more/page_info. A SHORT page is normal —
-        // a 197-row page still advances the offset by the full 200 — so the
-        // only valid terminator is an absent cursor.
+        // There is no has_more/page_info, and a SHORT page is normal — a
+        // 197-row page still advances the offset by the full 200 — so the only
+        // terminators are an absent cursor or one that stops moving.
         const next = parsed.nextCursor;
-        const endOfList = !next || users.length === 0;
+        let endOfList = !next || users.length === 0;
 
         if (!endOfList) {
-          const nextOffset = Number(next);
-          const curOffset = cursor == null ? 0 : Number(cursor);
-          if (!Number.isFinite(nextOffset) || nextOffset <= curOffset) {
-            throw new Halt(`Cursor did not advance (${cursor} -> ${next}).`, 'cursor');
-          }
-          cursor = String(nextOffset);
+          // /following/ returns a numeric offset ("200", "400"); /followers/
+          // can return an opaque token. Demanding a number here killed the
+          // followers walk after one page. Accept any cursor, and only require
+          // that it actually moves and has not been seen before this pass.
+          const looped = next === cursor || seenCursors.has(next);
+          const bothNumeric =
+            Number.isFinite(Number(next)) && Number.isFinite(Number(cursor || 0));
+          const wentBackwards = bothNumeric && Number(next) <= Number(cursor || 0);
 
-          if (total >= maxUsers) {
-            post({ type: 'collect:done', runId: run.id, reason: 'limit', pages: pageIndex, total });
-            return;
-          }
+          if (looped || wentBackwards) {
+            // As far as the server will page. Not an error — end the pass so
+            // the union still counts what was collected.
+            endOfList = true;
+            post({
+              type: 'collect:warn',
+              runId: run.id,
+              message: `Instagram stopped paging after ${total} of ${
+                expectedTotal != null ? expectedTotal : '?'
+              }.`,
+            });
+          } else {
+            // A non-numeric cursor is anchored to a record rather than to a
+            // position, which makes it immune to the re-ranking skip that
+            // offset paging suffers. Walks like that converge in one pass, so
+            // they need far less re-walking.
+            if (!Number.isFinite(Number(next))) tokenCursor = true;
+            seenCursors.add(next);
+            cursor = next;
 
-          let wait = baseDelay + Math.random() * baseDelay * 0.6;
-          if (pageIndex % 10 === 0) wait += baseDelay * 3;
-          if (!(await sleepAbortable(wait, run))) {
-            post({ type: 'collect:done', runId: run.id, reason: 'aborted', pages: pageIndex, total });
-            return;
+            if (total >= maxUsers) {
+              post({ type: 'collect:done', runId: run.id, reason: 'limit', pages: pageIndex, total });
+              return;
+            }
+
+            let wait = baseDelay + Math.random() * baseDelay * 0.6;
+            if (pageIndex % 10 === 0) wait += baseDelay * 3;
+            if (!(await sleepAbortable(wait, run))) {
+              post({ type: 'collect:done', runId: run.id, reason: 'aborted', pages: pageIndex, total });
+              return;
+            }
+            continue;
           }
-          continue;
         }
 
         // --- one full walk finished -------------------------------------
@@ -1031,7 +1086,12 @@
         // straggler. Stopping at the first quiet pass is what produces phantom
         // "new follows" on the next check.
         const short = known && union < expectedTotal;
-        const done = pass >= maxPasses || (known && union >= expectedTotal) || quiet >= (short ? 2 : 1);
+        // Re-walking exists to recover people that offset paging skipped. A
+        // record-anchored cursor cannot skip anyone, so a second quiet pass is
+        // pure cost — and on /followers/, at 25 a page, it is most of the wait.
+        const quietNeeded = short && !tokenCursor ? 2 : 1;
+        const done =
+          pass >= maxPasses || (known && union >= expectedTotal) || quiet >= quietNeeded;
 
         if (!done) {
           post({
@@ -1066,6 +1126,7 @@
         }
 
         cursor = null;
+        seenCursors = new Set();
         if (!(await sleepAbortable(2000 + Math.random() * 2000, run))) {
           post({ type: 'collect:done', runId: run.id, reason: 'aborted', pages: pageIndex, total });
           return;

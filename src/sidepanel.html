@@ -11,6 +11,7 @@
       <h1>Let's stalk that hoe! <span class="h1-emoji">🤪</span></h1>
       <button id="newStalkBtn" class="big primary">Start a new stalk</button>
       <button id="monitorBtn" class="big">Monitor a user</button>
+      <button id="selfBtn" class="big">My account</button>
       <p class="fine">
         A first capture records who someone follows right now. Every capture after that
         reveals who they have added since — dated to when you checked.
@@ -67,6 +68,44 @@
           <button id="monStopBtn" hidden>Stop</button>
         </div>
         <div id="monCounts" class="counts" hidden></div>
+      </div>
+    </section>
+
+    <!-- ── my account ───────────────────────────────────────────────────── -->
+    <section id="screenSelf" class="screen" hidden>
+      <div class="bar">
+        <div class="row">
+          <button class="back" data-home title="Back">&#8592;</button>
+          <strong id="selfTitle" class="grow">My account</strong>
+        </div>
+        <div id="selfCounts" class="counts" hidden></div>
+        <div class="scanrow">
+          <span class="scanlabel">Following</span>
+          <span id="selfFollowingState" class="scanstate">never scanned</span>
+          <button id="scanFollowingBtn" class="small">Scan</button>
+        </div>
+        <div class="scanrow">
+          <span class="scanlabel">Followers</span>
+          <span id="selfFollowersState" class="scanstate">never scanned</span>
+          <button id="scanFollowersBtn" class="small">Scan</button>
+        </div>
+        <div class="row">
+          <span class="scanlabel">Speed</span>
+          <select id="selfSpeed" class="grow" aria-label="Scan pacing">
+            <option value="safe">Safe — slowest, least likely to be throttled</option>
+            <option value="fast">Fast</option>
+            <option value="max">Max — no delay between pages</option>
+          </select>
+        </div>
+        <div id="selfWarn" class="alert" hidden></div>
+        <button id="selfStopBtn" hidden>Stop scan</button>
+        <div class="row">
+          <select id="selfMode" class="grow" aria-label="What to show">
+            <option value="notback">Doesn't follow you back</option>
+            <option value="fans">You don't follow back</option>
+            <option value="mutual">Mutuals</option>
+          </select>
+        </div>
       </div>
     </section>
 

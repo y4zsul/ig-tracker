@@ -284,6 +284,46 @@ button.big {
   border-radius: var(--r-lg);
 }
 
+/* --- my account scan rows --- */
+
+.scanrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.scanlabel {
+  flex: 0 0 auto;
+  font-weight: 700;
+  font-size: 12px;
+  min-width: 62px;
+}
+
+.scanstate {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scanstate.bad {
+  color: var(--bad);
+}
+
+button.small {
+  flex: 0 0 auto;
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
 /* Breathing room between the account picker and the action below it. */
 .check-row {
   margin-top: 6px;

@@ -18,8 +18,21 @@ const els = {
   screenHome: $('screenHome'),
   screenNew: $('screenNew'),
   screenMon: $('screenMon'),
+  screenSelf: $('screenSelf'),
   newStalkBtn: $('newStalkBtn'),
   monitorBtn: $('monitorBtn'),
+  selfBtn: $('selfBtn'),
+
+  selfTitle: $('selfTitle'),
+  selfCounts: $('selfCounts'),
+  selfFollowingState: $('selfFollowingState'),
+  selfFollowersState: $('selfFollowersState'),
+  scanFollowingBtn: $('scanFollowingBtn'),
+  scanFollowersBtn: $('scanFollowersBtn'),
+  selfWarn: $('selfWarn'),
+  selfSpeed: $('selfSpeed'),
+  selfStopBtn: $('selfStopBtn'),
+  selfMode: $('selfMode'),
 
   username: $('username'),
   kind: $('kind'),
@@ -74,6 +87,10 @@ let monKey = null; // selected watched list
 let monData = null; // { summary, accounts, snapshots }
 let pendingCheck = null; // trackKey awaiting a finished capture
 
+// My-account screen: the two sides of my own graph, diffed against each other.
+let selfFollowing = null;
+let selfFollowers = null;
+
 const nf = new Intl.NumberFormat();
 const dtfFull = new Intl.DateTimeFormat(undefined, {
   weekday: 'short',
@@ -114,10 +131,13 @@ function show(next) {
   els.screenHome.hidden = next !== 'home';
   els.screenNew.hidden = next !== 'new';
   els.screenMon.hidden = next !== 'monitor';
+  els.screenSelf.hidden = next !== 'self';
 
   els.activity.hidden = next === 'home';
   els.viewport.hidden = next !== 'new';
-  els.monList.hidden = next !== 'monitor';
+  // monList is the generic scrolling results container, shared by both
+  // list-rendering screens.
+  els.monList.hidden = next !== 'monitor' && next !== 'self';
   if (next !== 'monitor') els.monCounts.hidden = true;
   els.empty.hidden = true;
 
@@ -231,6 +251,167 @@ async function showOrphans() {
   }
 }
 
+// --- my account --------------------------------------------------------------
+
+/** Accounts currently in a list — everyone seen, minus those since departed. */
+function members(track) {
+  return track ? track.accounts.filter((a) => !a.goneAt) : [];
+}
+
+/**
+ * Whether a captured side can be trusted for a difference.
+ *
+ * This matters more here than anywhere else in the app: "doesn't follow you
+ * back" is computed by subtracting one list from the other, so anyone MISSING
+ * from the followers capture is wrongly accused of not following you. A short
+ * followers scan produces a list of false accusations, which is worse than no
+ * list at all — hence the loud warning rather than a quiet asterisk.
+ */
+function sideQuality(track) {
+  if (!track || !track.snapshots.length) return { ok: false, reason: 'never scanned' };
+  const last = track.snapshots[track.snapshots.length - 1];
+  const when = new Date(last.at).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  if (last.full === false) {
+    return { ok: false, when, reason: `incomplete (${nf.format(last.count)} of ${nf.format(last.expectedTotal)})` };
+  }
+  return { ok: true, when, reason: `${nf.format(members(track).length)} accounts, ${when}` };
+}
+
+function renderSelf() {
+  const handle =
+    (selfFollowing && selfFollowing.summary.username) ||
+    (selfFollowers && selfFollowers.summary.username) ||
+    null;
+  els.selfTitle.textContent = handle ? `@${handle}` : 'My account';
+
+  const followingQ = sideQuality(selfFollowing);
+  const followersQ = sideQuality(selfFollowers);
+  els.selfFollowingState.textContent = followingQ.reason;
+  els.selfFollowersState.textContent = followersQ.reason;
+  els.selfFollowingState.classList.toggle('bad', !followingQ.ok);
+  els.selfFollowersState.classList.toggle('bad', !followersQ.ok);
+
+  const sum = (selfFollowers && selfFollowers.summary) || (selfFollowing && selfFollowing.summary);
+  if (sum && (sum.reportedFollowers != null || sum.reportedFollowing != null)) {
+    const part = (n, label) => (n == null ? '' : `<span><b>${nf.format(n)}</b>${label}</span>`);
+    els.selfCounts.innerHTML =
+      part(sum.reportedFollowers, 'followers') + part(sum.reportedFollowing, 'following');
+    els.selfCounts.hidden = false;
+  } else {
+    els.selfCounts.hidden = true;
+  }
+
+  const mode = els.selfMode.value;
+  const following = members(selfFollowing);
+
+  // Preferred path: Instagram tags each row of your following list with
+  // whether that account follows you back. When present it is authoritative
+  // and needs no followers scan at all — which matters because the followers
+  // endpoint stops serving pages well before the end on larger accounts, so a
+  // subtraction against it invents people who "don't follow you back".
+  const tagged = following.filter((a) => a.followsYou != null);
+  const coverage = following.length ? tagged.length / following.length : 0;
+  const direct = coverage >= 0.9 && following.length > 0;
+
+  if (direct && mode !== 'fans') {
+    els.selfWarn.hidden = false;
+    els.selfWarn.classList.remove('bad');
+    els.selfWarn.textContent =
+      'Read directly from your following list — no followers scan needed, and not affected by how far the followers scan gets.';
+
+    const list = (mode === 'notback'
+      ? tagged.filter((a) => a.followsYou === false)
+      : tagged.filter((a) => a.followsYou === true)
+    )
+      .slice()
+      .sort(byName);
+    paintSelfList(list, mode);
+    return;
+  }
+
+  // Fallback: subtract one captured list from the other.
+  if (!selfFollowing || !selfFollowers) {
+    els.selfWarn.hidden = false;
+    els.selfWarn.classList.remove('bad');
+    els.selfWarn.textContent = direct
+      ? 'Scan your followers to see who follows you that you do not follow back.'
+      : 'Scan both lists to compare them. Following is quick; followers is slower because Instagram only serves 25 per page.';
+    els.monList.innerHTML = '';
+    els.empty.hidden = false;
+    els.empty.innerHTML = '<p class="fine">Nothing to compare yet.</p>';
+    return;
+  }
+
+  const followers = members(selfFollowers);
+  const followerPks = new Set(followers.map((a) => a.pk));
+  const followingPks = new Set(following.map((a) => a.pk));
+
+  if (!followingQ.ok || !followersQ.ok) {
+    const s = selfFollowers.snapshots[selfFollowers.snapshots.length - 1];
+    const got = s ? nf.format(s.count) : '?';
+    const want = s && s.expectedTotal != null ? nf.format(s.expectedTotal) : '?';
+    els.selfWarn.hidden = false;
+    els.selfWarn.classList.add('bad');
+    els.selfWarn.textContent =
+      `The followers scan reached ${got} of ${want}, so this comparison is a guess — anyone it ` +
+      `never reached is listed below as not following you back, wrongly. Re-scan followers; if it ` +
+      `still stops short, re-scan your following list instead, which can report follow-back ` +
+      `status directly without needing followers at all.`;
+  } else {
+    els.selfWarn.hidden = true;
+    els.selfWarn.classList.remove('bad');
+  }
+
+  let list;
+  if (mode === 'notback') list = following.filter((a) => !followerPks.has(a.pk));
+  else if (mode === 'fans') list = followers.filter((a) => !followingPks.has(a.pk));
+  else list = following.filter((a) => followerPks.has(a.pk));
+
+  list = list.slice().sort(byName);
+  paintSelfList(list, mode);
+}
+
+function paintSelfList(list, mode) {
+
+  if (!list.length) {
+    els.monList.innerHTML = '';
+    els.empty.hidden = false;
+    els.empty.innerHTML = '<p><strong>Nobody here.</strong></p>';
+    return;
+  }
+
+  els.empty.hidden = true;
+  const label =
+    mode === 'notback'
+      ? `${nf.format(list.length)} you follow who don't follow you back`
+      : mode === 'fans'
+      ? `${nf.format(list.length)} who follow you that you don't follow back`
+      : `${nf.format(list.length)} mutuals`;
+
+  els.monList.innerHTML =
+    `<div class="ghead"><span class="gtime">${esc(label)}</span></div>` +
+    `<div class="gbody">${list.map((u) => userRowHtml(u)).join('')}</div>`;
+}
+
+async function loadSelf() {
+  selfFollowing = null;
+  selfFollowers = null;
+  if (!selfId) return;
+  for (const kind of ['following', 'followers']) {
+    const res = await send({ type: 'IGFO_GET_TRACK', key: `${kind}:${selfId}` });
+    if (res.ok) {
+      const data = { summary: res.summary, accounts: res.accounts, snapshots: res.snapshots };
+      if (kind === 'following') selfFollowing = data;
+      else selfFollowers = data;
+    }
+  }
+}
+
 /** Instagram's own displayed counts for the watched account, not our tally. */
 function renderCounts() {
   const s = monData && monData.summary;
@@ -325,6 +506,11 @@ function renderControls() {
   els.resumeBtn.hidden = busy || !canResume;
   els.resumeBtn.textContent = `Resume from ${nf.format(shown ? shown.total : 0)}`;
 
+  els.scanFollowingBtn.disabled = busy || !selfId;
+  els.scanFollowersBtn.disabled = busy || !selfId;
+  els.selfSpeed.disabled = busy;
+  els.selfStopBtn.hidden = !busy;
+
   els.checkBtn.hidden = busy;
   els.monStopBtn.hidden = !busy;
   els.checkBtn.disabled = busy || !monKey;
@@ -353,7 +539,8 @@ function renderControls() {
 
   const alerts = [];
   if (active && active.warning) alerts.push(active.warning);
-  if (shown && shown.error && screen === 'new') alerts.push(shown.error);
+  // Not when the completion panel is already showing the same message.
+  if (shown && shown.error && screen === 'new' && els.doneMsg.hidden) alerts.push(shown.error);
   els.alert.hidden = alerts.length === 0;
   if (alerts.length) els.alert.textContent = alerts.join(' ');
 }
@@ -370,6 +557,8 @@ function render() {
   } else if (screen === 'monitor') {
     renderCounts();
     renderGroups();
+  } else if (screen === 'self') {
+    renderSelf();
   }
 }
 
@@ -441,6 +630,11 @@ chrome.runtime.onMessage.addListener((message) => {
   // that the arrivals view is out of date — no run bookkeeping involved.
   if (message.type === 'IGFO_TRACK_UPDATED') {
     (async () => {
+      if (screen === 'self') {
+        await loadSelf();
+        render();
+        return;
+      }
       await loadTracks();
       if (!monKey || monKey === message.key) {
         monKey = message.key;
@@ -501,6 +695,14 @@ chrome.runtime.onMessage.addListener((message) => {
 
 /** A capture just completed: either it was the baseline, or it is a re-check. */
 async function onCaptureFinished(key, run) {
+  // A scan started from the My account screen stays there — it is comparing
+  // two lists, not opening a watch.
+  if (screen === 'self') {
+    await loadSelf();
+    render();
+    return;
+  }
+
   await loadTracks();
   monKey = key;
   await loadMon();
@@ -518,6 +720,9 @@ async function onCaptureFinished(key, run) {
   }
 
   if (!monData) {
+    // The completion panel carries the reason, so suppress the alert strip —
+    // otherwise the same sentence appears twice, one above the other.
+    els.alert.hidden = true;
     els.doneMsg.hidden = false;
     els.doneMsg.classList.add('bad');
     els.doneMsg.innerHTML =
@@ -659,7 +864,37 @@ els.username.addEventListener('keydown', (e) => {
 els.resumeBtn.addEventListener('click', resume);
 els.stopBtn.addEventListener('click', stopCapture);
 els.monStopBtn.addEventListener('click', stopCapture);
+els.selfStopBtn.addEventListener('click', stopCapture);
 els.checkBtn.addEventListener('click', checkNow);
+
+els.selfBtn.addEventListener('click', async () => {
+  await loadState();
+  await loadSelf();
+  show('self');
+  if (!selfId) {
+    els.selfWarn.hidden = false;
+    els.selfWarn.textContent =
+      'Your account id is not known yet. Open a logged-in instagram.com tab, refresh it, then come back.';
+  }
+});
+
+els.selfMode.addEventListener('change', () => {
+  els.monList.scrollTop = 0;
+  renderSelf();
+});
+
+async function scanSelf(kind) {
+  if (!selfId) return;
+  // beginCapture reads the pacing off the New stalk screen's select, so mirror
+  // this screen's choice into it rather than keeping two sources of truth.
+  els.speed.value = els.selfSpeed.value;
+  pendingCheck = true;
+  els.selfWarn.hidden = true;
+  await beginCapture(selfId, kind);
+}
+
+els.scanFollowingBtn.addEventListener('click', () => scanSelf('following'));
+els.scanFollowersBtn.addEventListener('click', () => scanSelf('followers'));
 
 els.trackSelect.addEventListener('change', async () => {
   monKey = els.trackSelect.value;

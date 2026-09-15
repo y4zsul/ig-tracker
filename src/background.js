@@ -183,6 +183,8 @@ function ingestSnapshot(run) {
         fullName: u.fullName,
         isPrivate: u.isPrivate,
         isVerified: u.isVerified,
+        followsYou: u.followsYou != null ? u.followsYou : null,
+        youFollow: u.youFollow != null ? u.youFollow : null,
         // baseline = present in the very first capture, so its arrival time is
         // unknown, not "now". Conflating the two would invent a timeline.
         baseline: isFirst,
@@ -201,6 +203,8 @@ function ingestSnapshot(run) {
       if (u.fullName) acc.fullName = u.fullName;
       acc.isPrivate = u.isPrivate;
       acc.isVerified = u.isVerified;
+      if (u.followsYou != null) acc.followsYou = u.followsYou;
+      if (u.youFollow != null) acc.youFollow = u.youFollow;
     }
   }
 
@@ -336,6 +340,8 @@ function slimUser(rec) {
     fullName: rec.fullName,
     isPrivate: rec.isPrivate,
     isVerified: rec.isVerified,
+    followsYou: rec.followsYou != null ? rec.followsYou : null,
+    youFollow: rec.youFollow != null ? rec.youFollow : null,
   };
 }
 
@@ -639,6 +645,8 @@ function onCollectPage(p) {
       fullName: u.fullName,
       isPrivate: u.isPrivate,
       isVerified: u.isVerified,
+      followsYou: u.followsYou != null ? u.followsYou : null,
+      youFollow: u.youFollow != null ? u.youFollow : null,
       raw: u.raw,
     };
     run.seen[u.pk] = rec.followRank;
