@@ -43,6 +43,7 @@ const els = {
   greeting: $('greeting'),
   confetti: $('confetti'),
 
+  ver: $('ver'),
   viewport: $('viewport'),
   spacer: $('spacer'),
   rows: $('rows'),
@@ -190,6 +191,48 @@ function arrivalGroups() {
     .map(([at, list]) => ({ at, users: list.sort(byName) }));
 }
 
+/**
+ * Surfaces captures that collected accounts but never became a watch, with a
+ * button to adopt them. This exists because a capture going in without its
+ * watch coming out is otherwise invisible and unrecoverable.
+ */
+async function showOrphans() {
+  const res = await send({ type: 'IGFO_ORPHAN_RUNS' });
+  if (!res.ok || !res.orphans.length) return;
+
+  const rows = res.orphans
+    .map(
+      (o) =>
+        `<button class="orphan" data-run="${esc(o.id)}">Save ${esc(
+          o.username ? '@' + o.username : o.targetId
+        )} · ${o.kind} · ${nf.format(o.total)} accounts</button>`
+    )
+    .join('');
+
+  els.empty.innerHTML =
+    `<p><strong>Nothing being watched yet.</strong></p>` +
+    `<p class="fine">But ${res.orphans.length === 1 ? 'a capture' : 'some captures'} finished ` +
+    `without being saved. Adopt ${res.orphans.length === 1 ? 'it' : 'them'} as a baseline:</p>` +
+    `<div class="orphans">${rows}</div>`;
+
+  for (const b of els.empty.querySelectorAll('.orphan')) {
+    b.addEventListener('click', async () => {
+      b.disabled = true;
+      b.textContent = 'Saving…';
+      const fixed = await send({ type: 'IGFO_INGEST_RUN', runId: b.dataset.run });
+      if (fixed.ok) {
+        monKey = fixed.key;
+        await loadTracks();
+        els.trackSelect.value = monKey;
+        await loadMon();
+        render();
+      } else {
+        b.textContent = fixed.error || 'Could not save';
+      }
+    });
+  }
+}
+
 /** Instagram's own displayed counts for the watched account, not our tally. */
 function renderCounts() {
   const s = monData && monData.summary;
@@ -212,6 +255,9 @@ function renderGroups() {
     els.monList.innerHTML = '';
     els.empty.hidden = false;
     els.empty.innerHTML = '<p><strong>Nothing being watched yet.</strong></p>';
+    // A finished capture with no watch behind it is recoverable — offer it
+    // rather than leaving a dead end.
+    showOrphans();
     return;
   }
 
@@ -461,10 +507,37 @@ async function onCaptureFinished(key, run) {
   monKey = key;
   await loadMon();
 
-  const isBaseline = monData && monData.summary.snapshotCount === 1;
+  // Never navigate to Monitor with nothing to show there. If the capture
+  // collected rows but no watch was recorded, fold it in now and carry on —
+  // the user should not have to redo a capture over bookkeeping.
+  if (!monData && run && run.total > 0) {
+    const fixed = await send({ type: 'IGFO_INGEST_RUN', runId: run.id });
+    if (fixed.ok) {
+      await loadTracks();
+      monKey = fixed.key;
+      await loadMon();
+    }
+  }
+
+  if (!monData) {
+    els.doneMsg.hidden = false;
+    els.doneMsg.classList.add('bad');
+    els.doneMsg.innerHTML =
+      `<strong>Nothing was saved.</strong> ` +
+      esc(
+        (run && run.error) ||
+          'The capture returned no accounts — the list may be private or restricted.'
+      ) +
+      ` <br><span class="fine">Try again; anything already collected is kept.</span>`;
+    render();
+    return;
+  }
+
+  const isBaseline = monData.summary.snapshotCount === 1;
 
   if (screen === 'new' && isBaseline) {
     els.doneMsg.hidden = false;
+    els.doneMsg.classList.remove('bad');
     els.doneMsg.innerHTML =
       `<strong>Baseline saved — ${nf.format(all.length)} accounts.</strong> ` +
       `We'll keep an eye on them from now on. Come back to <em>Monitor a user</em> to see who they add.` +
@@ -475,6 +548,7 @@ async function onCaptureFinished(key, run) {
 
   // A re-check: the arrivals are what matter, so go straight to them.
   els.doneMsg.hidden = true;
+  els.doneMsg.classList.remove('bad');
   els.trackSelect.value = monKey;
   show('monitor');
 }
@@ -689,6 +763,10 @@ els.monDeleteBtn.addEventListener('click', async () => {
   await loadMon();
   render();
 });
+
+try {
+  els.ver.textContent = `v${chrome.runtime.getManifest().version}`;
+} catch (_) {}
 
 maybeGreet();
 show('home');

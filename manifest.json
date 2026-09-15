@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Stalk That Hoe!",
-  "version": "6.3.0",
+  "version": "6.6.0",
   "description": "Captures Instagram follower/following lists and builds a real chronological timeline by comparing captures over time. Search and CSV export.",
   "minimum_chrome_version": "114",
   "permissions": ["sidePanel", "storage", "unlimitedStorage"],

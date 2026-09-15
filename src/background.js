@@ -288,9 +288,9 @@ function ingestSnapshot(run) {
 const looksNumeric = (s) => !s || /^\d+$/.test(String(s));
 
 /**
- * A stored name of "72763411747" is an id that never got resolved (the Me
- * button, or a typed id). Prefer any real handle learned since, so old records
- * stop showing digits once the handle is known.
+ * An all-digit stored name is an id that never got resolved to a handle.
+ * Prefer any real handle learned since, so old records stop showing digits
+ * once the username is known.
  */
 function displayName(targetId, stored) {
   if (!looksNumeric(stored)) return stored;
@@ -662,6 +662,20 @@ function onCollectPage(p) {
 function onCollectDone(p) {
   const run = state.runs.get(p.runId);
   if (!run) return;
+  // Belt and braces: a finished run holding nothing is a failure, whatever the
+  // page called it. Otherwise it saves no watch and says nothing went wrong.
+  if (!run.users.length) {
+    run.status = 'error';
+    run.error =
+      run.error ||
+      'Instagram returned no accounts for this list. It may be private, restricted, or not visible to your account.';
+    run.finishedAt = Date.now();
+    if (state.activeRunId === run.id) state.activeRunId = null;
+    scheduleSave(run.id);
+    updateBadge();
+    pushState();
+    return;
+  }
   run.status = p.reason === 'complete' ? 'complete' : p.reason === 'aborted' ? 'aborted' : 'partial';
   run.finishedAt = Date.now();
   if (run.status === 'complete' && run.expectedTotal != null) {
@@ -691,6 +705,11 @@ function onCollectError(p) {
   if (p.kind === 'rate') run.rateLimitedAt = Date.now();
   run.finishedAt = Date.now();
   if (state.activeRunId === run.id) state.activeRunId = null;
+  // A capture that died partway still collected real accounts. Record them:
+  // the snapshot is marked incomplete, so removals are not inferred from it
+  // and the next check's arrivals stay flagged. Dropping it entirely left the
+  // user with rows on screen but no watch at all.
+  ingestSnapshot(run);
   scheduleSave(run.id);
   updateBadge();
   pushState();
@@ -1012,6 +1031,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         return;
       }
 
+      // Repair hatch: a finished run has rows but no watch record. Rather than
+      // strand the user on an empty Monitor screen, the panel asks for the run
+      // to be folded in after the fact.
+      case 'IGFO_INGEST_RUN': {
+        const run = state.runs.get(message.runId);
+        if (!run || !run.targetId || !run.users.length) {
+          sendResponse({ ok: false, error: 'That capture has nothing to save.' });
+          return;
+        }
+        const key = `${run.kind}:${run.targetId}`;
+        if (!state.tracked.has(key)) ingestSnapshot(run);
+        sendResponse({ ok: true, key });
+        return;
+      }
+
       case 'IGFO_DELETE_TRACK': {
         if (state.tracked.has(message.key)) {
           state.tracked.delete(message.key);
@@ -1020,6 +1054,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         sendResponse({ ok: true });
         pushState();
+        return;
+      }
+
+      // Captures that hold real rows but have no watch record. Whatever caused
+      // the gap, the data is still here and can be adopted.
+      case 'IGFO_ORPHAN_RUNS': {
+        const orphans = [...state.runs.values()]
+          .filter((r) => r.targetId && r.users.length && !state.tracked.has(`${r.kind}:${r.targetId}`))
+          .sort((a, b) => b.startedAt - a.startedAt)
+          .map((r) => ({
+            id: r.id,
+            kind: r.kind,
+            username: displayName(r.targetId, r.targetUsername),
+            targetId: r.targetId,
+            total: r.users.length,
+            startedAt: r.startedAt,
+            status: r.status,
+          }));
+        sendResponse({ ok: true, orphans });
         return;
       }
 

@@ -192,6 +192,16 @@ body {
   color: initial;
 }
 
+/* Makes "are you both on the same build?" answerable without DevTools. */
+.ver {
+  margin-top: 14px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
 .home .fine {
   margin-top: 12px;
   font-size: 13px;
@@ -388,6 +398,11 @@ button.armed:hover {
 .done {
   border: 1px solid color-mix(in srgb, var(--ok) 45%, var(--line));
   background: color-mix(in srgb, var(--ok) 9%, var(--surface));
+}
+
+.done.bad {
+  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 10%, var(--surface));
 }
 
 .progress {
@@ -631,6 +646,24 @@ button.armed:hover {
 
 .empty p {
   margin: 0;
+}
+
+.orphans {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+button.orphan {
+  width: 100%;
+  padding: 11px 12px;
+  font-size: 12.5px;
+  border-radius: var(--r-md);
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  border-color: transparent;
+  color: #fff;
+  box-shadow: var(--shadow-md);
 }
 
 .empty strong {

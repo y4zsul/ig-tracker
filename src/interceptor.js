@@ -1042,6 +1042,17 @@
         }
 
         if (done) {
+          // Zero accounts is NOT a successful capture. Instagram answers with
+          // an empty list — no error, no cursor — for lists it will not serve,
+          // and reporting that as "complete" silently produced a finished run
+          // with nothing recorded and no explanation.
+          if (union === 0) {
+            throw new Halt(
+              'Instagram returned no accounts for this list. It may be private, ' +
+                'restricted, or not visible to your account.',
+              'empty'
+            );
+          }
           post({
             type: 'collect:done',
             runId: run.id,

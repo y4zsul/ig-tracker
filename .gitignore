@@ -1,0 +1,11 @@
+# Build output — the repo itself is the loadable extension, so this is only
+# ever a convenience zip for sharing with non-developers.
+dist/
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+*.swp
