@@ -1,15 +1,24 @@
 // ==UserScript==
 // @name         Stalk That Hoe! — who doesn't follow you back
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.0.0
+// @version      1.0.1
 // @description  Shows which accounts you follow that don't follow you back. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
 // @run-at       document-start
-// @inject-into  page
 // @grant        none
 // ==/UserScript==
+
+// NOTE ON INJECTION CONTEXT
+// `@inject-into page` is deliberately NOT set. Managers implement page-context
+// injection by appending a <script> element, and instagram.com sends a strict
+// script-src CSP that blocks exactly that — silently, with no error the user
+// can see. Left unset, the manager picks a context that works.
+//
+// Running in the content context costs us nothing here: DOM access is the
+// same, and same-origin requests to /api/v1/... still carry the session
+// cookies, which is all the collector needs.
 
 /**
  * iOS/mobile companion to the desktop extension in ../src.
@@ -359,10 +368,11 @@
 
       .fab {
         position: fixed;
-        right: 16px;
-        bottom: calc(76px + env(safe-area-inset-bottom, 0px));
+        right: 14px;
+        /* Clear of Instagram's bottom nav, which is taller on some devices. */
+        bottom: calc(104px + env(safe-area-inset-bottom, 0px));
         z-index: 2147483000;
-        width: 54px; height: 54px;
+        width: 56px; height: 56px;
         border-radius: 50%;
         border: none;
         background: linear-gradient(135deg, #e0357f, #a34ae0);
