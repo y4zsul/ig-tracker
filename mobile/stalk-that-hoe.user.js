@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.4.0
+// @version      1.4.1
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -710,18 +710,14 @@
         display: block; width: 100%; height: auto;
         max-height: 68vh; object-fit: contain; background: #000;
       }
-      .story-acts { display: flex; gap: 8px; padding: 8px 10px; }
-      .story-acts a, .story-acts button {
-        flex: 1; text-align: center; padding: 9px 6px;
-        font-size: 12px; font-weight: 700; text-decoration: none;
-        border-radius: 9px; border: 1px solid #e0357f; color: #e0357f;
-        background: transparent; cursor: pointer; font-family: inherit;
+      .story-acts { padding: 8px 10px; }
+      .story-acts button {
+        width: 100%; padding: 11px 6px;
+        font-size: 13px; font-weight: 700; font-family: inherit;
+        border-radius: 10px; border: none; cursor: pointer;
+        background: linear-gradient(135deg,#e0357f,#a34ae0); color: #fff;
       }
-      .story-acts a:active, .story-acts button:active { background: rgba(224,53,127,.12); }
-      .story-acts .fill {
-        flex: 1.4; background: linear-gradient(135deg,#e0357f,#a34ae0);
-        color: #fff; border-color: transparent;
-      }
+      .story-acts button:active { filter: brightness(.92); }
     </style>
 
     <button class="fab">✌︎</button>
@@ -1152,9 +1148,7 @@
           `<div class="story-acts">` +
           `<button class="fill" data-save="${esc(url)}" data-name="${esc(name)}" data-type="${
             it.isVideo ? 'video/mp4' : 'image/jpeg'
-          }">Save</button>` +
-          `<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">Open</a>` +
-          `<button data-copy="${esc(url)}">Link</button>` +
+          }">Save story</button>` +
           `</div>`;
 
         return (
@@ -1304,8 +1298,15 @@
   async function saveMedia(btn, url, name, type) {
     const reset = (t, ms) => {
       btn.textContent = t;
-      if (ms) setTimeout(() => (btn.textContent = 'Save'), ms);
+      if (ms) setTimeout(() => (btn.textContent = 'Save story'), ms);
     };
+
+    // A previous attempt could not fetch the media, so this tap opens it
+    // instead. Done synchronously, inside the gesture, or iOS blocks it.
+    if (btn.dataset.fallback) {
+      window.open(url, '_blank', 'noopener');
+      return;
+    }
 
     try {
       let blob = blobCache.get(url);
@@ -1341,10 +1342,12 @@
       reset('Saved', 1600);
     } catch (e) {
       const n = e && e.name;
-      if (n === 'AbortError') return reset('Save'); // share sheet dismissed
+      if (n === 'AbortError') return reset('Save story'); // share sheet dismissed
       if (blobCache.has(url)) return reset('Tap again'); // gesture expired, file is ready
-      // Usually CORS on the CDN. Open is still there as a manual route.
-      reset('Use Open →', 2500);
+      // Usually CORS on the CDN. Arm the fallback so the next tap opens the
+      // media directly, where iOS can still save it by hand.
+      btn.dataset.fallback = '1';
+      reset('Open it instead');
     }
   }
 
@@ -1393,25 +1396,6 @@
 
     const sv = e.target.closest('[data-save]');
     if (sv) return saveMedia(sv, sv.dataset.save, sv.dataset.name, sv.dataset.type);
-
-    const copy = e.target.closest('[data-copy]');
-    if (copy) {
-      // Called straight out of the tap, with no await before it, so the
-      // clipboard write still counts as a user gesture.
-      const done = () => {
-        copy.textContent = 'Copied';
-        setTimeout(() => (copy.textContent = 'Copy link'), 1500);
-      };
-      try {
-        navigator.clipboard.writeText(copy.dataset.copy).then(done, () => {
-          copy.textContent = 'Copy failed';
-          setTimeout(() => (copy.textContent = 'Copy link'), 1500);
-        });
-      } catch (_) {
-        copy.textContent = 'Copy failed';
-      }
-      return;
-    }
 
     const id = e.target.id;
     if (id === 'scan') {
