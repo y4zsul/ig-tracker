@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.1.2
+// @version      1.1.3
 // @description  See who doesn't follow you back, and track who an account starts following over time. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -559,11 +559,21 @@
         select, input { background: #1f1926 !important; color: #f3eaf1 !important; }
       }
 
-      header { padding: 14px 56px 8px 16px; position: relative; }
-      h1 { margin: 0 0 2px; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
-      .sub { font-size: 12px; color: #8d7683; }
+      header {
+        padding: 18px 58px 14px 16px;
+        position: relative;
+        /* The close/back buttons are absolutely positioned and out of flow, so
+           the header has to reserve their height itself. Without this it
+           collapses on views with no subtitle and the first control rides up
+           underneath them. */
+        min-height: 66px;
+      }
+      h1 { margin: 0 0 3px; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+      /* Holds a line even when empty, so the header is the same height on
+         every view and the content below does not jump around. */
+      .sub { font-size: 12px; line-height: 15px; min-height: 15px; color: #8d7683; }
       .x, .bk {
-        position: absolute; top: 10px;
+        position: absolute; top: 14px;
         /* Both sit BEFORE <header> in the DOM, and header is position:relative.
            Without a z-index the header paints over them, so they stay visible
            but swallow every tap. */
@@ -573,9 +583,9 @@
       }
       .x { right: 12px; }
       .bk { left: 12px; }
-      header.hasback { padding-left: 56px; }
+      header.hasback { padding-left: 58px; }
 
-      .pad { padding: 0 16px 10px; }
+      .pad { padding: 0 16px 12px; }
       .rowf { display: flex; gap: 8px; }
       button.act {
         flex: 1; padding: 13px; font-size: 15px; font-weight: 700;
@@ -585,11 +595,12 @@
       button.act.ghost { background: transparent; color: #e0357f; border: 1px solid #e0357f; font-weight: 600; }
       button.act:disabled { opacity: .5; }
       button.big {
-        width: 100%; padding: 18px; margin-bottom: 10px;
+        width: 100%; padding: 18px; margin-bottom: 12px;
         font-size: 16px; font-weight: 700; text-align: left;
         border-radius: 14px; border: 1px solid #f4dde9; cursor: pointer;
         background: rgba(127,127,127,.06); color: inherit;
       }
+      button.big:last-child { margin-bottom: 0; }
       button.big b { display: block; font-size: 16px; }
       button.big span { display: block; font-size: 12px; font-weight: 500; opacity: .7; margin-top: 3px; }
       button.big.p { background: linear-gradient(135deg, #e0357f, #a34ae0); color: #fff; border: none; }
@@ -1103,3 +1114,4 @@
   // Instagram is a single-page app and re-renders the body on navigation.
   setInterval(mount, 3000);
 })();
+
