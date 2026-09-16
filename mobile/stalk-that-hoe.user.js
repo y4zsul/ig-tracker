@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.1.3
-// @description  See who doesn't follow you back, and track who an account starts following over time. Runs entirely on your own device, in your own Instagram session.
+// @version      1.2.0
+// @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
@@ -259,6 +259,48 @@
 
     const info = await fetchUserInfo(pk);
     return { pk, username: (info && info.username) || hit.username || raw, info };
+  }
+
+  // --- stories ---------------------------------------------------------------
+  //
+  // Viewing a story and MARKING IT SEEN are two different requests. The media
+  // arrives from the reels endpoint; the read receipt is a separate
+  // /api/v1/media/seen/ POST the app sends afterwards. This fetches the reel
+  // and never sends that POST — there is no "anonymous" flag, just an omitted
+  // request. Nothing here may ever post to that endpoint.
+
+  function bestUrl(list) {
+    if (!Array.isArray(list) || !list.length) return null;
+    let best = list[0];
+    for (const c of list) {
+      if (c && typeof c.width === 'number' && c.width > (best.width || 0)) best = c;
+    }
+    return best && best.url ? String(best.url) : null;
+  }
+
+  function parseReel(json, pk) {
+    let reel = null;
+    if (Array.isArray(json.reels_media) && json.reels_media.length) reel = json.reels_media[0];
+    else if (json.reels && typeof json.reels === 'object') {
+      reel = json.reels[pk] || Object.values(json.reels)[0] || null;
+    } else if (json.reel) reel = json.reel;
+    if (!reel || !Array.isArray(reel.items)) return null;
+
+    return {
+      username: reel.user && reel.user.username ? String(reel.user.username) : null,
+      items: reel.items
+        .map((it) => {
+          const image = bestUrl(it.image_versions2 && it.image_versions2.candidates);
+          const video = bestUrl(it.video_versions);
+          return {
+            takenAt: typeof it.taken_at === 'number' ? it.taken_at * 1000 : null,
+            isVideo: !!video || it.media_type === 2,
+            image,
+            video,
+          };
+        })
+        .filter((i) => i.image || i.video),
+    };
   }
 
   function shapeUser(u) {
@@ -650,6 +692,24 @@
                color: #8d7683; border-top: 1px dashed #f4dde9; }
 
       .empty { padding: 40px 20px; text-align: center; color: #8d7683; font-size: 14px; line-height: 1.6; }
+
+      .stat { display: flex; gap: 8px; padding: 0 16px 12px; }
+      .stat div {
+        flex: 1; text-align: center; padding: 10px 6px;
+        border: 1px solid #f4dde9; border-radius: 12px; background: rgba(127,127,127,.05);
+        font-size: 11px; color: #8d7683;
+      }
+      .stat b { display: block; font-size: 18px; font-weight: 800; color: inherit; }
+
+      .story { margin-bottom: 10px; border: 1px solid #f4dde9; border-radius: 12px; overflow: hidden; }
+      .story-head {
+        display: flex; justify-content: space-between; gap: 8px;
+        padding: 8px 10px; font-size: 11px; color: #8d7683;
+      }
+      .story-media {
+        display: block; width: 100%; height: auto;
+        max-height: 68vh; object-fit: contain; background: #000;
+      }
     </style>
 
     <button class="fab">✌︎</button>
@@ -684,6 +744,10 @@
   let view = 'home';
   let selfMode = 'notback';
   let monKey = null;
+  let cmpA = null;
+  let cmpB = null;
+  let cmpMode = 'both';
+  let stories = null; // last loaded reel, kept in memory only
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
@@ -727,6 +791,8 @@
         <button class="big" data-go="monitor"><b>Monitor a user</b><span>${
           watching ? `See who they've added · ${watching} watched` : 'Nothing watched yet'
         }</span></button>
+        <button class="big" data-go="compare"><b>Compare two accounts</b><span>Who they both follow</span></button>
+        <button class="big" data-go="stories"><b>Watch stories quietly</b><span>No seen receipt sent</span></button>
       </div>`;
     ui.list.innerHTML = `<div class="empty">Instagram never says when a follow happened, so a first
       capture has no order. Only what shows up <i>after</i> it can be dated.</div>`;
@@ -910,10 +976,162 @@
        relative to each other.</div>`;
   }
 
+  /**
+   * How complete a track is, judged on the ACCUMULATED membership across every
+   * capture rather than the last run alone — captures union into one record,
+   * so a track can hold more than any single run collected.
+   */
+  function quality(t) {
+    const last = t.snapshots[t.snapshots.length - 1];
+    const have = members(t).length;
+    const want = last ? last.expectedTotal : null;
+    if (want != null && want > 0 && want - have > Math.max(5, want * 0.02)) {
+      return { ok: false, text: `${nf.format(have)} of ${nf.format(want)}` };
+    }
+    return { ok: true, text: `${nf.format(have)}` };
+  }
+
+  function renderCompare() {
+    ui.title.textContent = 'Compare';
+    ui.back.hidden = false;
+    ui.header.classList.add('hasback');
+
+    const keys = Object.keys(data.tracks);
+    if (keys.length < 2) {
+      ui.sub.textContent = '';
+      ui.controls.innerHTML = '';
+      setNote('', false);
+      ui.list.innerHTML = `<div class="empty"><b>Stalk two accounts first.</b><br>
+        This compares lists you've already captured, so it needs at least two.</div>`;
+      return;
+    }
+    if (!cmpA || !data.tracks[cmpA]) cmpA = keys[0];
+    if (!cmpB || !data.tracks[cmpB] || cmpB === cmpA) cmpB = keys.find((k) => k !== cmpA) || keys[1];
+
+    const opts = (sel) =>
+      keys
+        .map(
+          (k) =>
+            `<option value="${esc(k)}" ${k === sel ? 'selected' : ''}>@${esc(
+              data.tracks[k].username || data.tracks[k].pk
+            )} · ${data.tracks[k].kind}</option>`
+        )
+        .join('');
+
+    ui.sub.textContent = 'Runs on captures you already have — no requests.';
+    ui.controls.innerHTML = `
+      <div class="pad"><select id="cA">${opts(cmpA)}</select></div>
+      <div class="pad"><select id="cB">${opts(cmpB)}</select></div>`;
+
+    const ta = data.tracks[cmpA];
+    const tb = data.tracks[cmpB];
+    const A = members(ta);
+    const B = members(tb);
+    const bPks = new Set(B.map((u) => u.pk));
+    const aPks = new Set(A.map((u) => u.pk));
+    const both = A.filter((u) => bPks.has(u.pk));
+    const onlyA = A.filter((u) => !bPks.has(u.pk));
+    const onlyB = B.filter((u) => !aPks.has(u.pk));
+
+    ui.controls.innerHTML += `
+      <div class="stat">
+        <div><b>${nf.format(both.length)}</b>in both</div>
+        <div><b>${nf.format(A.length)}</b>first</div>
+        <div><b>${nf.format(B.length)}</b>second</div>
+      </div>
+      <div class="tabs">
+        <button class="tab" data-c="both" aria-selected="${cmpMode === 'both'}">In both</button>
+        <button class="tab" data-c="onlyA" aria-selected="${cmpMode === 'onlyA'}">Only 1st</button>
+        <button class="tab" data-c="onlyB" aria-selected="${cmpMode === 'onlyB'}">Only 2nd</button>
+      </div>`;
+
+    const qa = quality(ta);
+    const qb = quality(tb);
+    if (ta.kind !== tb.kind) {
+      setNote(`You're comparing a ${ta.kind} list against a ${tb.kind} list.`, true);
+    } else if (!qa.ok || !qb.ok) {
+      // Only omission is possible here — everyone shown really is in both.
+      setNote(
+        `At least this many — a capture came up short, so a few may be missing. ` +
+          `@${ta.username} ${qa.text}, @${tb.username} ${qb.text}. Re-check them from Monitor.`,
+        true
+      );
+    } else {
+      setNote('', false);
+    }
+
+    const list = (cmpMode === 'onlyA' ? onlyA : cmpMode === 'onlyB' ? onlyB : both)
+      .slice()
+      .sort(byName);
+    const verb = ta.kind === 'following' ? 'followed by' : 'following';
+    const label =
+      cmpMode === 'onlyA'
+        ? `only ${verb} @${ta.username}`
+        : cmpMode === 'onlyB'
+        ? `only ${verb} @${tb.username}`
+        : `${verb} both`;
+
+    ui.list.innerHTML =
+      `<div class="ghead"><span class="gtime">${nf.format(list.length)} ${esc(label)}</span></div>` +
+      (list.length ? list.map(card).join('') : '<div class="empty"><b>No overlap at all.</b></div>');
+  }
+
+  function renderStories() {
+    ui.title.textContent = 'Stories';
+    ui.back.hidden = false;
+    ui.header.classList.add('hasback');
+    ui.sub.textContent = stories ? `@${stories.username}` : 'Watch without being seen.';
+
+    ui.controls.innerHTML = `
+      <div class="pad"><input id="storyUser" type="text" placeholder="username"
+        autocapitalize="off" autocorrect="off" spellcheck="false"></div>
+      <div class="pad rowf"><button class="act" id="loadStory">Load story</button></div>`;
+
+    if (!stories) {
+      setNote(
+        "Loads their story without sending a seen receipt, so you shouldn't appear in their viewer list. Don't open the same story in Instagram afterwards — that will.",
+        true
+      );
+      ui.list.innerHTML = '<div class="empty">Enter a username and tap <b>Load story</b>.</div>';
+      return;
+    }
+
+    if (!stories.items.length) {
+      setNote('', false);
+      ui.list.innerHTML = `<div class="empty"><b>@${esc(stories.username)} has no active story.</b>
+        <br>Stories expire after 24 hours.</div>`;
+      return;
+    }
+
+    setNote('Loaded without a seen receipt.', true);
+    ui.list.innerHTML = stories.items
+      .map((it, i) => {
+        const when = it.takenAt
+          ? new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(
+              new Date(it.takenAt)
+            )
+          : '';
+        // preload="none" so opening the list does not pull every video at once.
+        const media = it.isVideo
+          ? `<video class="story-media" controls playsinline preload="none"${
+              it.image ? ` poster="${esc(it.image)}"` : ''
+            } src="${esc(it.video)}"></video>`
+          : `<img class="story-media" loading="lazy" src="${esc(it.image)}" alt="">`;
+        return (
+          `<div class="story"><div class="story-head">` +
+          `<span>${i + 1} of ${stories.items.length}</span>` +
+          `<span>${esc(when)}${it.isVideo ? ' · video' : ''}</span></div>${media}</div>`
+        );
+      })
+      .join('');
+  }
+
   function render() {
     if (view === 'home') renderHome();
     else if (view === 'self') renderSelf();
     else if (view === 'stalk') renderStalk();
+    else if (view === 'compare') renderCompare();
+    else if (view === 'stories') renderStories();
     else renderMonitor();
   }
 
@@ -1029,6 +1247,26 @@
     }
   }
 
+  async function loadStory(input) {
+    busy(true);
+    setNote('', false);
+    ui.list.innerHTML = '<div class="empty">Looking them up…</div>';
+    try {
+      const t = await resolveTarget(input);
+      const json = await apiGet(`/api/v1/feed/reels_media/?reel_ids=${encodeURIComponent(t.pk)}`);
+      const reel = parseReel(json, String(t.pk));
+      stories = { username: (reel && reel.username) || t.username, items: (reel && reel.items) || [] };
+    } catch (e) {
+      stories = null;
+      setNote(e && e.message ? e.message : String(e), true);
+      ui.list.innerHTML = '<div class="empty">Nothing loaded.</div>';
+      busy(false);
+      return;
+    }
+    busy(false);
+    render();
+  }
+
   // --- events ----------------------------------------------------------------
 
   ui.fab.addEventListener('click', () => {
@@ -1046,7 +1284,8 @@
 
     const tab = e.target.closest('.tab');
     if (tab) {
-      selfMode = tab.dataset.m;
+      if (tab.dataset.c) cmpMode = tab.dataset.c;
+      else selfMode = tab.dataset.m;
       ui.list.scrollTop = 0;
       return render();
     }
@@ -1060,6 +1299,7 @@
       return scanSelf(following.length && !direct && !s.followers ? 'followers' : 'following');
     }
     if (id === 'start') return startStalk(root.querySelector('#target').value);
+    if (id === 'loadStory') return loadStory(root.querySelector('#storyUser').value);
     if (id === 'check') return checkNow();
     if (id === 'stop') {
       run.aborted = true;
@@ -1084,15 +1324,19 @@
   });
 
   root.addEventListener('change', (e) => {
-    if (e.target.id === 'pick') {
-      monKey = e.target.value;
-      ui.list.scrollTop = 0;
-      render();
-    }
+    const id = e.target.id;
+    if (id === 'pick') monKey = e.target.value;
+    else if (id === 'cA') cmpA = e.target.value;
+    else if (id === 'cB') cmpB = e.target.value;
+    else return;
+    ui.list.scrollTop = 0;
+    render();
   });
 
   root.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && e.target.id === 'target') startStalk(e.target.value);
+    if (e.key !== 'Enter') return;
+    if (e.target.id === 'target') startStalk(e.target.value);
+    else if (e.target.id === 'storyUser') loadStory(e.target.value);
   });
 
   // A scan lost to a reload means starting over, so make it deliberate.
