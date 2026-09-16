@@ -7,8 +7,28 @@ No build step, no dependencies, no account, no server. Load the folder into
 Chrome and it works.
 
 > **Just want to use it?**
-> [Download the zip](https://github.com/y4zsul/ig-tracker/raw/main/download/instalurk.zip),
+> [Download the zip](https://github.com/y4zsul/ig-tracker/releases/latest/download/instalurk.zip),
 > then follow [INSTALL.md](INSTALL.md) — about a minute, no tools needed.
+
+<!-- That link resolves to the newest release's asset, so it never needs
+     updating, and GitHub counts every hit. The copy still in download/ is
+     kept only so links already shared elsewhere keep working; downloads
+     through that path are not counted. -->
+
+## Releases
+
+Each version is published as a [release](https://github.com/y4zsul/ig-tracker/releases)
+with `instalurk.zip` attached. Cutting one per version is what makes the
+download numbers work, and it shows which versions people are actually on.
+
+```
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+Then attach `download/instalurk.zip` to the release on GitHub. Counts are on
+the releases page, or as JSON at
+`api.github.com/repos/y4zsul/ig-tracker/releases`.
 
 ## What it can and cannot do
 
