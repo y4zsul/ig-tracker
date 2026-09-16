@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.1.1
+// @version      1.1.2
 // @description  See who doesn't follow you back, and track who an account starts following over time. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -559,13 +559,17 @@
         select, input { background: #1f1926 !important; color: #f3eaf1 !important; }
       }
 
-      header { padding: 14px 16px 8px; position: relative; }
+      header { padding: 14px 56px 8px 16px; position: relative; }
       h1 { margin: 0 0 2px; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
       .sub { font-size: 12px; color: #8d7683; }
       .x, .bk {
         position: absolute; top: 10px;
-        width: 34px; height: 34px; border-radius: 50%; border: none;
-        background: rgba(128,128,128,.18); color: inherit; font-size: 17px; cursor: pointer;
+        /* Both sit BEFORE <header> in the DOM, and header is position:relative.
+           Without a z-index the header paints over them, so they stay visible
+           but swallow every tap. */
+        z-index: 3;
+        width: 38px; height: 38px; border-radius: 50%; border: none;
+        background: rgba(128,128,128,.18); color: inherit; font-size: 18px; cursor: pointer;
       }
       .x { right: 12px; }
       .bk { left: 12px; }
