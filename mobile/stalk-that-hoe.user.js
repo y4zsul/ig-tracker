@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.2.0
+// @version      1.2.1
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -787,7 +787,7 @@
     ui.controls.innerHTML = `
       <div class="pad">
         <button class="big p" data-go="self"><b>My account</b><span>Who doesn't follow you back</span></button>
-        <button class="big" data-go="stalk"><b>Start a new stalk</b><span>Record who someone follows right now</span></button>
+        <button class="big" data-go="stalk"><b>Start a new stalk</b><span>Record who they follow now, to monitor later</span></button>
         <button class="big" data-go="monitor"><b>Monitor a user</b><span>${
           watching ? `See who they've added · ${watching} watched` : 'Nothing watched yet'
         }</span></button>
@@ -882,7 +882,7 @@
     ui.title.textContent = 'Start a new stalk';
     ui.back.hidden = false;
     ui.header.classList.add('hasback');
-    ui.sub.textContent = 'Records who they follow right now.';
+    ui.sub.textContent = 'Records who they follow now, so Monitor can show what changes.';
     ui.controls.innerHTML = `
       <div class="pad"><input id="target" type="text" placeholder="username" autocapitalize="off"
         autocorrect="off" spellcheck="false" inputmode="text"></div>
