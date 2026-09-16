@@ -3,16 +3,14 @@
 A Manifest V3 Chrome extension that tracks **who an Instagram account starts
 following over time**, and dates each new follow to when it was spotted.
 
-No build step, no dependencies, no account, no server. Load the folder into
-Chrome and it works.
+## How to use
 
-> **Just want to use it?**
-> [Download the zip](https://github.com/y4zsul/ig-tracker/releases/latest/download/instalurk.zip),
-> then follow [INSTALL.md](INSTALL.md) — about a minute, no tools needed.
->
-> Use that link rather than the green **Code → Download ZIP** button. The green
-> button hands you the whole repository — source, docs, the phone script — when
-> all you want is the packaged extension.
+[**Download the zip**](https://github.com/y4zsul/ig-tracker/releases/latest/download/instalurk.zip),
+then follow [INSTALL.md](INSTALL.md) — about a minute, no tools needed.
+
+Use that link rather than the green **Code → Download ZIP** button. The green
+button hands you the whole repository — source, docs, the phone script — when
+all you want is the packaged extension.
 
 <!-- The download link resolves to the newest release's asset, so it never
      needs updating, and GitHub counts every hit on it.
@@ -21,21 +19,6 @@ Chrome and it works.
      download/, kept only so links already shared elsewhere keep working, and
      the green Code -> Download ZIP button, which cannot be turned off on a
      public repo. Treat the release number as a floor, not an exact count. -->
-
-## Releases
-
-Each version is published as a [release](https://github.com/y4zsul/ig-tracker/releases)
-with `instalurk.zip` attached. Cutting one per version is what makes the
-download numbers work, and it shows which versions people are actually on.
-
-```
-git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin vX.Y.Z
-```
-
-Then attach `download/instalurk.zip` to the release on GitHub. Counts are on
-the releases page, or as JSON at
-`api.github.com/repos/y4zsul/ig-tracker/releases`.
 
 ## What it can and cannot do
 
@@ -322,3 +305,17 @@ temporary action block is a real possibility. That's your call to make.
 There's no build step and no toolchain. Edit the files, hit reload on
 `chrome://extensions`, and refresh your Instagram tab — the content scripts
 inject at `document_start`, so the tab must reload for changes to take effect.
+
+## Releases
+
+Each version is published as a [release](https://github.com/y4zsul/ig-tracker/releases)
+with `instalurk.zip` attached. Cutting one per version is what makes the
+download numbers work, and it shows which versions people are actually on.
+
+```
+git tag -a vX.Y.Z -m "vX.Y.Z"
+git push origin vX.Y.Z
+```
+
+Then attach `download/instalurk.zip` to the release on GitHub. Counts are on
+the releases page, or run `tools/downloads.ps1`.
