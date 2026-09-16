@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Stalk That Hoe! — who doesn't follow you back
+// @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.0.1
-// @description  Shows which accounts you follow that don't follow you back. Runs entirely on your own device, in your own Instagram session.
+// @version      1.1.1
+// @description  See who doesn't follow you back, and track who an account starts following over time. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
 // @match        https://instagram.com/*
@@ -14,30 +14,29 @@
 // `@inject-into page` is deliberately NOT set. Managers implement page-context
 // injection by appending a <script> element, and instagram.com sends a strict
 // script-src CSP that blocks exactly that — silently, with no error the user
-// can see. Left unset, the manager picks a context that works.
+// can see. Left unset, the manager picks a context that works. (Confirmed on a
+// device: with `page` set, nothing ran at all.)
 //
-// Running in the content context costs us nothing here: DOM access is the
-// same, and same-origin requests to /api/v1/... still carry the session
-// cookies, which is all the collector needs.
+// Running in the content context costs us nothing: DOM access is the same, and
+// same-origin requests to /api/v1/... still carry the session cookies.
 
 /**
  * iOS/mobile companion to the desktop extension in ../src.
  *
  * DUPLICATION IS DELIBERATE. A userscript must be one self-contained file, and
- * the extension deliberately has no build step, so the collector logic exists
- * in both places. Fixes to pagination, cursor handling or rate limiting need
- * applying to ../src/interceptor.js as well.
+ * the extension has no build step, so the collector logic exists in both
+ * places. Fixes to pagination, cursor handling, rate limiting or the
+ * arrival/absorption rules need applying to ../src/ as well.
  *
- * Scope is one question only: who do you follow that doesn't follow you back.
+ * Three things it does:
+ *   1. My account — who you follow that doesn't follow you back.
+ *   2. New stalk  — baseline capture of anyone's following list.
+ *   3. Monitor    — who they have added since, dated to when you checked.
  *
- * Two ways to answer it, in order of preference:
- *   1. Each row of your FOLLOWING list can carry friendship_status.followed_by,
- *      which answers it outright with no second scan. Preferred, and immune to
- *      the followers endpoint's limits.
- *   2. Otherwise, scan followers too and subtract. Slower and less reliable,
- *      because /followers/ is served 25 at a time and stops paging early on
- *      larger accounts — so anyone it never reached would be wrongly accused.
- *      Offered as an explicit extra step, never silently.
+ * Instagram publishes no follow timestamps and serves these lists in ranked
+ * order, so a single capture is NEVER chronological. Chronology only comes
+ * from comparing captures over time, and the UI is written to never imply
+ * otherwise.
  */
 
 (() => {
@@ -50,11 +49,20 @@
   const FALLBACK_APP_ID = '936619743392459';
   const RATE_BACKOFF_MS = [45000, 180000, 420000, 900000];
 
-  // --- tiny helpers ----------------------------------------------------------
-
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const nf = new Intl.NumberFormat();
   const nativeFetch = window.fetch.bind(window);
+
+  const dtGroup = new Intl.DateTimeFormat(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+  const dtShort = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+  // --- session ---------------------------------------------------------------
 
   function cookie(name) {
     const m = new RegExp(`(?:^|;\\s*)${name}=([^;]*)`).exec(document.cookie || '');
@@ -71,10 +79,6 @@
     return v && /^\d{3,}$/.test(v) ? v : null;
   }
 
-  // --- API headers -----------------------------------------------------------
-
-  // A wrong or missing x-ig-app-id makes the API answer HTTP 429, so it is
-  // worth three separate ways of getting it.
   const harvested = Object.create(null);
   const WANTED = ['x-ig-app-id', 'x-asbd-id', 'x-ig-www-claim', 'x-csrftoken'];
 
@@ -95,7 +99,6 @@
     } catch (_) {}
   }
 
-  // Passive: learn the real headers from Instagram's own calls.
   try {
     const wrapped = function fetch(input, init) {
       try {
@@ -174,15 +177,12 @@
         'html'
       );
     }
-
     if (res.status === 429) {
       let after = 0;
       try {
         const raw = res.headers.get('retry-after');
-        if (raw) {
-          const secs = Number(raw);
-          after = Number.isFinite(secs) ? secs * 1000 : 0;
-        }
+        const secs = raw ? Number(raw) : NaN;
+        if (Number.isFinite(secs)) after = secs * 1000;
       } catch (_) {}
       throw new Halt('Instagram is rate limiting (HTTP 429).', 'rate', after);
     }
@@ -212,10 +212,53 @@
         username: typeof u.username === 'string' ? u.username : null,
         followers: Number.isInteger(u.follower_count) ? u.follower_count : null,
         following: Number.isInteger(u.following_count) ? u.following_count : null,
+        isPrivate: !!u.is_private,
       };
     } catch (_) {
       return null;
     }
+  }
+
+  /**
+   * Handle -> pk. web_profile_info answers 429 for every logged-in session, so
+   * topsearch is the working route. It is FUZZY — a query for "jane" happily
+   * returns "janedoe123" — so only an exact username match counts.
+   */
+  async function resolveTarget(input) {
+    const raw = String(input || '').replace(/^@/, '').trim();
+    if (!raw) throw new Halt('Enter a username.', 'input');
+
+    if (/^\d{3,}$/.test(raw)) {
+      const info = await fetchUserInfo(raw);
+      return { pk: raw, username: (info && info.username) || raw, info };
+    }
+
+    const json = await apiGet(
+      `/api/v1/web/search/topsearch/?context=blended&query=${encodeURIComponent(raw)}`
+    );
+    const want = raw.toLowerCase();
+    let hit = null;
+    for (const entry of (json && json.users) || []) {
+      const u = (entry && entry.user) || entry;
+      if (u && String(u.username || '').toLowerCase() === want) {
+        hit = u;
+        break;
+      }
+    }
+    if (!hit) throw new Halt(`No account called @${raw}.`, 'notfound');
+
+    const pk = String(hit.pk != null ? hit.pk : hit.id || '');
+    if (!pk) throw new Halt(`No account called @${raw}.`, 'notfound');
+
+    const fs = hit.friendship_status || {};
+    const follows = typeof fs.following === 'boolean' ? fs.following : null;
+    // Refuse only when certain; an unknown relationship lets the list call decide.
+    if (hit.is_private && follows === false && selfId() !== pk) {
+      throw new Halt(`@${hit.username} is private and you don't follow them.`, 'private');
+    }
+
+    const info = await fetchUserInfo(pk);
+    return { pk, username: (info && info.username) || hit.username || raw, info };
   }
 
   function shapeUser(u) {
@@ -233,17 +276,14 @@
 
   // --- the walk --------------------------------------------------------------
 
-  const state = {
-    running: false,
-    aborted: false,
-  };
+  const run = { busy: false, aborted: false };
 
   /**
-   * Pages through a friendships list and unions repeated passes.
+   * Pages a friendships list and unions repeated passes.
    *
    * next_max_id is a positional offset on /following/ but an opaque token on
-   * /followers/, so no assumption is made about its format — it only has to
-   * change and not repeat. A SHORT page is normal and must not end the walk.
+   * /followers/, so nothing assumes a format — the cursor only has to change
+   * and not repeat. A SHORT page is normal and must not end the walk.
    */
   async function walkList(kind, pk, expectedTotal, onProgress) {
     const pageSize = kind === 'followers' ? 25 : 200;
@@ -256,14 +296,14 @@
     let lastSize = -1;
     let tokenCursor = false;
     let rateRetries = 0;
+    let reachedEnd = false;
 
     while (pass < maxPasses) {
       let cursor = null;
       const seen = new Set();
-      let pages = 0;
 
       for (;;) {
-        if (state.aborted) return { users: [...union.values()], aborted: true };
+        if (run.aborted) return { users: [...union.values()], aborted: true, reachedEnd };
 
         let path = `/api/v1/friendships/${encodeURIComponent(pk)}/${kind}/?count=${pageSize}`;
         if (cursor) path += `&max_id=${encodeURIComponent(cursor)}`;
@@ -276,12 +316,12 @@
           if (e instanceof Halt && e.kind === 'rate' && rateRetries < RATE_BACKOFF_MS.length) {
             const wait = Math.max(RATE_BACKOFF_MS[rateRetries], e.retryAfterMs);
             rateRetries++;
-            onProgress({
-              note: `Rate limited — waiting ${Math.ceil(wait / 1000)}s. Keep this tab open.`,
-            });
             const until = Date.now() + wait;
             while (Date.now() < until) {
-              if (state.aborted) return { users: [...union.values()], aborted: true };
+              if (run.aborted) return { users: [...union.values()], aborted: true, reachedEnd };
+              onProgress({
+                note: `Rate limited. Waiting ${Math.ceil((until - Date.now()) / 1000)}s — keep this tab open.`,
+              });
               await sleep(1000);
             }
             continue;
@@ -291,25 +331,23 @@
 
         if (json && json.special_empty_state && (!json.users || !json.users.length)) {
           if (union.size) break;
-          throw new Halt("Instagram won't show this list.", 'restricted');
+          throw new Halt("Instagram won't show this list — it may be private or restricted.", 'restricted');
         }
-        if (!json || !Array.isArray(json.users)) {
-          throw new Halt('Unexpected response shape.', 'parse');
-        }
+        if (!json || !Array.isArray(json.users)) throw new Halt('Unexpected response shape.', 'parse');
 
         for (const raw of json.users) {
           const u = shapeUser(raw);
           if (u.pk && !union.has(u.pk)) union.set(u.pk, u);
         }
-        pages++;
         onProgress({ count: union.size, pass: pass + 1, expectedTotal });
 
         const next = json.next_max_id != null ? String(json.next_max_id) : null;
-        if (!next || !json.users.length) break;
+        if (!next || !json.users.length) {
+          reachedEnd = true;
+          break;
+        }
         if (next === cursor || seen.has(next)) break;
-
-        const bothNumeric =
-          Number.isFinite(Number(next)) && Number.isFinite(Number(cursor || 0));
+        const bothNumeric = Number.isFinite(Number(next)) && Number.isFinite(Number(cursor || 0));
         if (bothNumeric && Number(next) <= Number(cursor || 0)) break;
         if (!Number.isFinite(Number(next))) tokenCursor = true;
 
@@ -325,35 +363,163 @@
 
       const known = expectedTotal != null && expectedTotal > 0;
       if (known && union.size >= expectedTotal) break;
-      // A record-anchored cursor cannot skip anyone, so one quiet pass is
-      // enough. Numeric offsets can skip, so be stubborn while still short.
+      // A record-anchored cursor cannot skip anyone, so one quiet pass suffices.
+      // Numeric offsets can skip, so stay stubborn while still short.
       if (quiet >= (known && !tokenCursor ? 2 : 1)) break;
       if (pass < maxPasses) await sleep(1500);
     }
 
-    return { users: [...union.values()], aborted: false };
+    return { users: [...union.values()], aborted: false, reachedEnd };
   }
 
   // --- storage ---------------------------------------------------------------
 
+  let quotaHit = false;
+
+  function blank() {
+    return { v: 2, self: { info: null, following: null, followers: null, at: null }, tracks: {} };
+  }
+
   function load() {
     try {
       const raw = localStorage.getItem(STORE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      if (!raw) return blank();
+      const d = JSON.parse(raw);
+      if (d && d.v === 2) return d;
+      // v1 stored only the my-account lists at the top level.
+      return {
+        v: 2,
+        self: { info: d.info || null, following: d.following || null, followers: d.followers || null, at: d.at || null },
+        tracks: {},
+      };
     } catch (_) {
-      return null;
+      return blank();
     }
   }
 
-  function save(data) {
+  function save() {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(data));
+      quotaHit = false;
+      return true;
     } catch (_) {
-      // Quota or private browsing — results just won't survive a reload.
+      // Silent loss would cost someone their baseline, so surface it.
+      quotaHit = true;
+      return false;
     }
   }
 
-  let data = load() || { following: null, followers: null, info: null, at: null };
+  let data = load();
+
+  // Records are stored with short keys purely to fit more in localStorage.
+  const packAccount = (u, at, baseline, confirmed) => ({
+    u: u.username,
+    n: u.fullName,
+    p: u.isPrivate ? 1 : 0,
+    vf: u.isVerified ? 1 : 0,
+    f: at,
+    b: baseline ? 1 : 0,
+    c: confirmed === null ? null : confirmed ? 1 : 0,
+    g: null,
+  });
+
+  const unpack = (pk, a) => ({
+    pk,
+    username: a.u,
+    fullName: a.n,
+    isPrivate: !!a.p,
+    isVerified: !!a.vf,
+    firstSeenAt: a.f,
+    baseline: !!a.b,
+    confirmed: a.c === null ? null : !!a.c,
+    goneAt: a.g,
+  });
+
+  /**
+   * Folds a finished capture into the longitudinal record.
+   *
+   * The capture's own order is Instagram's ranked display order and means
+   * nothing. What means something is WHEN an account first showed up: absent
+   * from capture N, present in N+1, so it arrived between the two.
+   */
+  function ingest(kind, pk, username, users, expectedTotal, complete) {
+    const key = `${kind}:${pk}`;
+    const at = Date.now();
+    let t = data.tracks[key];
+    const isFirst = !t;
+    if (!t) {
+      t = { kind, pk, username, snapshots: [], accounts: {} };
+      data.tracks[key] = t;
+    }
+    if (username) t.username = username;
+
+    const prev = t.snapshots.length ? t.snapshots[t.snapshots.length - 1] : null;
+    const arrivalsTrustworthy = prev ? prev.full === true && prev.complete === true : false;
+
+    const seen = new Set();
+    const fresh = [];
+    for (const u of users) {
+      if (!u.pk) continue;
+      seen.add(u.pk);
+      const acc = t.accounts[u.pk];
+      if (!acc) {
+        t.accounts[u.pk] = packAccount(u, at, isFirst, isFirst ? null : arrivalsTrustworthy);
+        fresh.push(u.pk);
+      } else {
+        acc.g = null;
+        if (u.username) acc.u = u.username;
+        if (u.fullName) acc.n = u.fullName;
+      }
+    }
+
+    let departed = 0;
+    if (complete && !isFirst) {
+      for (const p of Object.keys(t.accounts)) {
+        if (!seen.has(p) && !t.accounts[p].g) {
+          t.accounts[p].g = at;
+          departed++;
+        }
+      }
+    }
+
+    const drift = expectedTotal != null ? expectedTotal - users.length : null;
+    const full = drift == null ? null : Math.abs(drift) <= Math.max(5, expectedTotal * 0.02);
+
+    // The strongest tell that an "arrival" is a recovered miss: the profile's
+    // own count did not rise enough to account for it. If they followed
+    // nobody, anybody newly visible was there all along.
+    const prevExpected = prev ? prev.expectedTotal : null;
+    const expectedDelta =
+      prevExpected != null && expectedTotal != null ? expectedTotal - prevExpected : null;
+    const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
+
+    let arrived = fresh.length;
+    let absorbed = 0;
+    if (plausibleNew === 0 && fresh.length) {
+      // Not news. Fold them into the baseline rather than parading them as
+      // arrivals with a disclaimer nobody can act on.
+      for (const p of fresh) {
+        const a = t.accounts[p];
+        a.b = 1;
+        a.c = null;
+        absorbed++;
+      }
+      arrived = 0;
+    } else if (plausibleNew != null && arrived > plausibleNew) {
+      for (const p of fresh) t.accounts[p].c = 0;
+    }
+
+    t.snapshots.push({ at, count: users.length, expectedTotal, complete, full });
+    if (t.snapshots.length > 100) t.snapshots.splice(0, t.snapshots.length - 100);
+
+    save();
+    return { arrived, absorbed, departed, isFirst, total: users.length };
+  }
+
+  const members = (t) =>
+    Object.entries(t.accounts)
+      .map(([pk, a]) => unpack(pk, a))
+      .filter((a) => !a.goneAt);
 
   // --- UI --------------------------------------------------------------------
 
@@ -367,63 +533,71 @@
       * { box-sizing: border-box; font-family: -apple-system, system-ui, sans-serif; }
 
       .fab {
-        position: fixed;
-        right: 14px;
-        /* Clear of Instagram's bottom nav, which is taller on some devices. */
+        position: fixed; right: 14px;
         bottom: calc(104px + env(safe-area-inset-bottom, 0px));
         z-index: 2147483000;
-        width: 56px; height: 56px;
-        border-radius: 50%;
-        border: none;
+        width: 56px; height: 56px; border-radius: 50%; border: none;
         background: linear-gradient(135deg, #e0357f, #a34ae0);
         color: #fff; font-size: 23px;
-        box-shadow: 0 6px 20px rgba(0,0,0,.3);
-        cursor: pointer;
+        box-shadow: 0 6px 20px rgba(0,0,0,.3); cursor: pointer;
       }
       .fab:active { transform: scale(.94); }
 
       .sheet {
-        position: fixed; inset: 0;
-        z-index: 2147483001;
+        position: fixed; inset: 0; z-index: 2147483001;
         display: flex; flex-direction: column;
-        background: #fff8fb;
-        color: #2b1b25;
+        background: #fff8fb; color: #2b1b25;
         padding-top: env(safe-area-inset-top, 0px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
       }
       .sheet[hidden] { display: none; }
       @media (prefers-color-scheme: dark) {
         .sheet { background: #15111a; color: #f3eaf1; }
-        .row, .card { border-color: #322838 !important; }
-        .sub { color: #a1919e !important; }
+        .card, .tab, select, input { border-color: #322838 !important; }
+        .sub, .n, .ghead-note { color: #a1919e !important; }
         .note { background: #1f1926 !important; border-color: #322838 !important; color: #a1919e !important; }
+        select, input { background: #1f1926 !important; color: #f3eaf1 !important; }
       }
 
-      header { padding: 14px 16px 10px; }
+      header { padding: 14px 16px 8px; position: relative; }
       h1 { margin: 0 0 2px; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
       .sub { font-size: 12px; color: #8d7683; }
+      .x, .bk {
+        position: absolute; top: 10px;
+        width: 34px; height: 34px; border-radius: 50%; border: none;
+        background: rgba(128,128,128,.18); color: inherit; font-size: 17px; cursor: pointer;
+      }
+      .x { right: 12px; }
+      .bk { left: 12px; }
+      header.hasback { padding-left: 56px; }
 
-      .bar { display: flex; gap: 8px; padding: 0 16px 10px; }
+      .pad { padding: 0 16px 10px; }
+      .rowf { display: flex; gap: 8px; }
       button.act {
         flex: 1; padding: 13px; font-size: 15px; font-weight: 700;
         border-radius: 12px; border: none; cursor: pointer;
         background: linear-gradient(135deg, #e0357f, #a34ae0); color: #fff;
       }
-      button.act.ghost {
-        background: transparent; color: #e0357f;
-        border: 1px solid #e0357f; font-weight: 600;
-      }
+      button.act.ghost { background: transparent; color: #e0357f; border: 1px solid #e0357f; font-weight: 600; }
       button.act:disabled { opacity: .5; }
-      button.x {
-        position: absolute; top: calc(10px + env(safe-area-inset-top, 0px)); right: 12px;
-        width: 34px; height: 34px; border-radius: 50%;
-        border: none; background: rgba(128,128,128,.18); color: inherit;
-        font-size: 17px; cursor: pointer;
+      button.big {
+        width: 100%; padding: 18px; margin-bottom: 10px;
+        font-size: 16px; font-weight: 700; text-align: left;
+        border-radius: 14px; border: 1px solid #f4dde9; cursor: pointer;
+        background: rgba(127,127,127,.06); color: inherit;
+      }
+      button.big b { display: block; font-size: 16px; }
+      button.big span { display: block; font-size: 12px; font-weight: 500; opacity: .7; margin-top: 3px; }
+      button.big.p { background: linear-gradient(135deg, #e0357f, #a34ae0); color: #fff; border: none; }
+      button.big.p span { opacity: .85; }
+
+      input, select {
+        width: 100%; padding: 13px; font-size: 16px;
+        border-radius: 12px; border: 1px solid #f4dde9; background: #fff; color: inherit;
       }
 
       .note {
-        margin: 0 16px 10px; padding: 9px 11px;
-        font-size: 11.5px; line-height: 1.5;
+        margin: 0 16px 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.5;
         border-radius: 10px; background: #fdeaf3; border: 1px solid #f4dde9; color: #8d7683;
       }
       .note[hidden] { display: none; }
@@ -431,16 +605,15 @@
       .tabs { display: flex; gap: 6px; padding: 0 16px 10px; }
       .tab {
         flex: 1; padding: 9px 6px; font-size: 12px; font-weight: 700;
-        border-radius: 9px; border: 1px solid #f4dde9; background: transparent;
-        color: inherit; cursor: pointer;
+        border-radius: 9px; border: 1px solid #f4dde9; background: transparent; color: inherit; cursor: pointer;
       }
       .tab[aria-selected="true"] { background: #e0357f; border-color: #e0357f; color: #fff; }
 
-      .list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 12px 24px; }
+      .list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 12px 28px; }
       .card {
-        display: flex; align-items: center; gap: 10px;
-        padding: 12px 12px; margin-bottom: 8px;
-        border: 1px solid #f4dde9; border-radius: 12px; background: rgba(127,127,127,.05);
+        display: flex; align-items: center; gap: 10px; padding: 12px;
+        margin-bottom: 8px; border: 1px solid #f4dde9; border-radius: 12px;
+        background: rgba(127,127,127,.05);
       }
       .who { flex: 1; min-width: 0; }
       .u { display: block; font-weight: 700; font-size: 15px; color: inherit; text-decoration: none;
@@ -448,45 +621,54 @@
       .n { display: block; font-size: 12px; color: #8d7683;
            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .go { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: #e0357f; text-decoration: none; }
+      .flag { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
+              padding: 3px 5px; border-radius: 5px; border: 1px solid #f3d9ab; color: #9a5b00; background: #fff5e6; }
+
+      .ghead { display: flex; justify-content: space-between; align-items: center;
+               gap: 8px; padding: 16px 4px 4px; }
+      .gtime { font-weight: 800; font-size: 13px; }
+      .gcount { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+                color: #fff; background: linear-gradient(135deg,#e0357f,#a34ae0);
+                padding: 4px 8px; border-radius: 99px; }
+      .ghead-note { padding: 0 4px 8px; font-size: 10.5px; color: #9a5b00; }
+      .gfoot { margin: 18px 4px 0; padding-top: 12px; font-size: 11px; line-height: 1.55;
+               color: #8d7683; border-top: 1px dashed #f4dde9; }
+
       .empty { padding: 40px 20px; text-align: center; color: #8d7683; font-size: 14px; line-height: 1.6; }
     </style>
 
-    <button class="fab" part="fab" title="Who doesn't follow you back">✌︎</button>
+    <button class="fab">✌︎</button>
 
     <div class="sheet" hidden>
       <button class="x">✕</button>
+      <button class="bk" hidden>‹</button>
       <header>
-        <h1>Who doesn't follow back</h1>
-        <div class="sub" id="sub">Tap Scan to start.</div>
+        <h1 id="title">Stalk That Hoe!</h1>
+        <div class="sub" id="sub"></div>
       </header>
-      <div class="bar">
-        <button class="act" id="scan">Scan</button>
-        <button class="act ghost" id="stop" hidden>Stop</button>
-      </div>
+      <div id="controls"></div>
       <div class="note" id="note" hidden></div>
-      <div class="tabs" id="tabs" hidden>
-        <button class="tab" data-mode="notback" aria-selected="true">Not back</button>
-        <button class="tab" data-mode="fans" aria-selected="false">Fans</button>
-        <button class="tab" data-mode="mutual" aria-selected="false">Mutual</button>
-      </div>
       <div class="list" id="list"></div>
     </div>
   `;
 
-  const $ = (sel) => root.querySelector(sel);
+  const $ = (s) => root.querySelector(s);
   const ui = {
     fab: $('.fab'),
     sheet: $('.sheet'),
     close: $('.x'),
+    back: $('.bk'),
+    header: $('header'),
+    title: $('#title'),
     sub: $('#sub'),
-    scan: $('#scan'),
-    stop: $('#stop'),
+    controls: $('#controls'),
     note: $('#note'),
-    tabs: $('#tabs'),
     list: $('#list'),
   };
 
-  let mode = 'notback';
+  let view = 'home';
+  let selfMode = 'notback';
+  let monKey = null;
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
@@ -494,154 +676,345 @@
     );
   }
 
-  function rows(list) {
-    if (!list.length) return '<div class="empty"><b>Nobody here.</b></div>';
-    return list
-      .map(
-        (u) =>
-          `<div class="card"><span class="who">` +
-          `<a class="u" href="https://www.instagram.com/${encodeURIComponent(u.username)}/">@${esc(u.username)}</a>` +
-          `<span class="n">${esc(u.fullName) || '&nbsp;'}</span></span>` +
-          `<a class="go" href="https://www.instagram.com/${encodeURIComponent(u.username)}/">Open</a></div>`
-      )
-      .join('');
+  const byName = (a, b) =>
+    String(a.username || '').localeCompare(String(b.username || ''), undefined, { sensitivity: 'base' });
+
+  function card(u) {
+    const flag = u.confirmed === false ? '<span class="flag">unverified</span>' : '';
+    const href = `https://www.instagram.com/${encodeURIComponent(u.username)}/`;
+    return (
+      `<div class="card"><span class="who">` +
+      `<a class="u" href="${href}">@${esc(u.username)}</a>` +
+      `<span class="n">${esc(u.fullName) || '&nbsp;'}</span></span>` +
+      flag +
+      `<a class="go" href="${href}">Open</a></div>`
+    );
   }
 
-  function compute() {
-    const following = data.following || [];
-    const tagged = following.filter((u) => u.followsYou != null);
-    const coverage = following.length ? tagged.length / following.length : 0;
+  function setNote(text, show) {
+    ui.note.hidden = !show;
+    if (show) ui.note.textContent = text;
+  }
 
-    // Preferred: Instagram already told us, per row, who follows back.
-    if (coverage >= 0.9 && following.length) {
-      return {
-        direct: true,
-        notback: tagged.filter((u) => u.followsYou === false),
-        mutual: tagged.filter((u) => u.followsYou === true),
-        fans: null, // needs the followers list; not knowable from this side
-      };
+  // --- views -----------------------------------------------------------------
+
+  function renderHome() {
+    ui.title.textContent = 'Stalk That Hoe!';
+    ui.sub.textContent = quotaHit ? 'Storage is full — delete a watch to save more.' : '';
+    ui.back.hidden = true;
+    ui.header.classList.remove('hasback');
+    setNote('', false);
+    const watching = Object.keys(data.tracks).length;
+    ui.controls.innerHTML = `
+      <div class="pad">
+        <button class="big p" data-go="self"><b>My account</b><span>Who doesn't follow you back</span></button>
+        <button class="big" data-go="stalk"><b>Start a new stalk</b><span>Record who someone follows right now</span></button>
+        <button class="big" data-go="monitor"><b>Monitor a user</b><span>${
+          watching ? `See who they've added · ${watching} watched` : 'Nothing watched yet'
+        }</span></button>
+      </div>`;
+    ui.list.innerHTML = `<div class="empty">Instagram never says when a follow happened, so a first
+      capture has no order. Only what shows up <i>after</i> it can be dated.</div>`;
+  }
+
+  function renderSelf() {
+    ui.title.textContent = 'My account';
+    ui.back.hidden = false;
+    ui.header.classList.add('hasback');
+    const s = data.self;
+    ui.sub.textContent = s.info
+      ? `@${s.info.username || '…'} · ${nf.format(s.info.followers ?? 0)} followers · ${nf.format(
+          s.info.following ?? 0
+        )} following`
+      : 'Tap Scan to start.';
+
+    const following = s.following || [];
+    const tagged = following.filter((u) => u.followsYou != null);
+    const direct = following.length && tagged.length / following.length >= 0.9;
+    const needFollowers = following.length && !direct && !s.followers;
+
+    ui.controls.innerHTML = `
+      <div class="pad rowf">
+        <button class="act" id="scan">${
+          !following.length ? 'Scan' : needFollowers ? 'Scan followers' : 'Re-scan'
+        }</button>
+        <button class="act ghost" id="stop" hidden>Stop</button>
+      </div>` +
+      (following.length && !needFollowers
+        ? `<div class="tabs">
+             <button class="tab" data-m="notback" aria-selected="${selfMode === 'notback'}">Traitors</button>
+             ${s.followers ? `<button class="tab" data-m="fans" aria-selected="${selfMode === 'fans'}">Fans</button>` : ''}
+             <button class="tab" data-m="mutual" aria-selected="${selfMode === 'mutual'}">Mutuals</button>
+           </div>`
+        : '');
+
+    if (!following.length) {
+      setNote('', false);
+      ui.list.innerHTML = '<div class="empty">Tap <b>Scan</b> to read your following list.<br>Keep this tab open.</div>';
+      return;
+    }
+    if (needFollowers) {
+      setNote(
+        'Instagram left out follow-back info this time, so your followers list is needed too. That one is slower — served 25 at a time — and may not finish on a large account.',
+        true
+      );
+      ui.list.innerHTML = '<div class="empty">Tap <b>Scan followers</b> to finish.</div>';
+      return;
     }
 
-    const followers = data.followers;
-    if (!followers) return { direct: false, needFollowers: true };
+    let list;
+    if (direct) {
+      setNote('Read straight from your following list — nothing is missing.', true);
+      list =
+        selfMode === 'mutual'
+          ? tagged.filter((u) => u.followsYou === true)
+          : tagged.filter((u) => u.followsYou === false);
+      if (selfMode === 'fans') list = [];
+    } else {
+      const fPks = new Set((s.followers || []).map((u) => u.pk));
+      const gPks = new Set(following.map((u) => u.pk));
+      setNote(
+        'Compared against your followers scan. If that came up short, some people here may actually follow you.',
+        true
+      );
+      list =
+        selfMode === 'fans'
+          ? (s.followers || []).filter((u) => !gPks.has(u.pk))
+          : selfMode === 'mutual'
+          ? following.filter((u) => fPks.has(u.pk))
+          : following.filter((u) => !fPks.has(u.pk));
+    }
 
-    const fPks = new Set(followers.map((u) => u.pk));
-    const gPks = new Set(following.map((u) => u.pk));
-    return {
-      direct: false,
-      notback: following.filter((u) => !fPks.has(u.pk)),
-      mutual: following.filter((u) => fPks.has(u.pk)),
-      fans: followers.filter((u) => !gPks.has(u.pk)),
-    };
+    list = list.slice().sort(byName);
+    const label =
+      selfMode === 'fans'
+        ? "follow you that you don't follow back"
+        : selfMode === 'mutual'
+        ? 'mutuals'
+        : "you follow who don't follow you back";
+    ui.list.innerHTML =
+      `<div class="ghead"><span class="gtime">${nf.format(list.length)} ${esc(label)}</span></div>` +
+      (list.length ? list.map(card).join('') : '<div class="empty"><b>Nobody here.</b></div>');
+  }
+
+  function renderStalk() {
+    ui.title.textContent = 'Start a new stalk';
+    ui.back.hidden = false;
+    ui.header.classList.add('hasback');
+    ui.sub.textContent = 'Records who they follow right now.';
+    ui.controls.innerHTML = `
+      <div class="pad"><input id="target" type="text" placeholder="username" autocapitalize="off"
+        autocorrect="off" spellcheck="false" inputmode="text"></div>
+      <div class="pad rowf">
+        <button class="act" id="start">Start stalk</button>
+        <button class="act ghost" id="stop" hidden>Stop</button>
+      </div>`;
+    setNote('', false);
+    ui.list.innerHTML = '<div class="empty">Enter a username and tap <b>Start stalk</b>.</div>';
+  }
+
+  function renderMonitor() {
+    ui.title.textContent = 'Monitor a user';
+    ui.back.hidden = false;
+    ui.header.classList.add('hasback');
+
+    const keys = Object.keys(data.tracks);
+    if (!keys.length) {
+      ui.sub.textContent = '';
+      ui.controls.innerHTML = '';
+      setNote('', false);
+      ui.list.innerHTML =
+        '<div class="empty"><b>Nothing watched yet.</b><br>Use <b>Start a new stalk</b> first — that first capture is the baseline.</div>';
+      return;
+    }
+    if (!monKey || !data.tracks[monKey]) monKey = keys[0];
+    const t = data.tracks[monKey];
+
+    ui.controls.innerHTML = `
+      <div class="pad"><select id="pick">${keys
+        .map(
+          (k) =>
+            `<option value="${esc(k)}" ${k === monKey ? 'selected' : ''}>@${esc(
+              data.tracks[k].username || data.tracks[k].pk
+            )} · ${data.tracks[k].kind}</option>`
+        )
+        .join('')}</select></div>
+      <div class="pad rowf">
+        <button class="act" id="check">Check now</button>
+        <button class="act ghost" id="stop" hidden>Stop</button>
+        <button class="act ghost" id="del" style="flex:0 0 auto;padding:13px 16px">✕</button>
+      </div>`;
+
+    const last = t.snapshots[t.snapshots.length - 1];
+    const all = members(t);
+    ui.sub.textContent = `${nf.format(all.length)} tracked · ${t.snapshots.length} check${
+      t.snapshots.length === 1 ? '' : 's'
+    } · since ${dtShort.format(new Date(t.snapshots[0].at))}`;
+
+    const arrivals = all.filter((a) => !a.baseline);
+    const baselineCount = all.length - arrivals.length;
+
+    if (!arrivals.length) {
+      setNote('', false);
+      ui.list.innerHTML = `<div class="empty"><b>Nobody new yet.</b><br>
+        ${nf.format(baselineCount)} accounts were already there when you started watching
+        on ${esc(dtShort.format(new Date(t.snapshots[0].at)))} — they aren't listed, because
+        there's no way to know what order they were added in.<br><br>Tap <b>Check now</b> to look again.</div>`;
+      return;
+    }
+
+    const buckets = new Map();
+    for (const a of arrivals) {
+      const l = buckets.get(a.firstSeenAt) || [];
+      l.push(a);
+      buckets.set(a.firstSeenAt, l);
+    }
+    const groups = [...buckets.entries()].sort((x, y) => y[0] - x[0]);
+
+    setNote('', false);
+    ui.list.innerHTML =
+      groups
+        .map(([at, list], i) => {
+          const shaky = list.filter((u) => u.confirmed === false).length;
+          return (
+            `<div class="ghead"><span class="gtime">${esc(dtGroup.format(new Date(at)))}</span>` +
+            // Only the newest check is badged; on older groups it reads as
+            // though those arrivals are new too.
+            (i === 0 ? `<span class="gcount">${nf.format(list.length)} new</span>` : '') +
+            `</div>` +
+            (shaky
+              ? `<div class="ghead-note">${nf.format(shaky)} unverified — the previous capture came
+                 up short, so they may have been followed long ago and simply missed.</div>`
+              : '') +
+            list.sort(byName).map(card).join('')
+          );
+        })
+        .join('') +
+      `<div class="gfoot">${nf.format(baselineCount)} accounts predate the watch and aren't listed.
+       <br>Accounts under one date were all found by that single check — they aren't in order
+       relative to each other.</div>`;
   }
 
   function render() {
-    const info = data.info;
-    if (info) {
-      ui.sub.textContent =
-        `@${info.username || '…'} · ${nf.format(info.followers ?? 0)} followers · ` +
-        `${nf.format(info.following ?? 0)} following` +
-        (data.at ? ` · scanned ${new Date(data.at).toLocaleDateString()}` : '');
-    }
-
-    if (!data.following) {
-      ui.tabs.hidden = true;
-      ui.list.innerHTML =
-        '<div class="empty">Tap <b>Scan</b> to read your following list.<br>Keep this tab open while it runs.</div>';
-      return;
-    }
-
-    const r = compute();
-
-    if (r.needFollowers) {
-      ui.tabs.hidden = true;
-      ui.note.hidden = false;
-      ui.note.textContent =
-        'Instagram did not include follow-back info this time, so your followers list is needed too. ' +
-        'That one is slower — it is served 25 at a time — and may not finish on a large account.';
-      ui.list.innerHTML =
-        '<div class="empty">Tap <b>Scan followers</b> to finish the comparison.</div>';
-      ui.scan.textContent = 'Scan followers';
-      ui.scan.dataset.kind = 'followers';
-      return;
-    }
-
-    ui.scan.textContent = 'Re-scan';
-    delete ui.scan.dataset.kind;
-    ui.tabs.hidden = false;
-    // "Fans" is unknowable from the following list alone.
-    root.querySelector('[data-mode="fans"]').style.display = r.fans ? '' : 'none';
-    if (mode === 'fans' && !r.fans) mode = 'notback';
-
-    ui.note.hidden = !r.direct;
-    if (r.direct) {
-      ui.note.textContent =
-        'Read straight from your following list — no followers scan needed, so nothing is missing.';
-    }
-
-    for (const t of root.querySelectorAll('.tab')) {
-      t.setAttribute('aria-selected', String(t.dataset.mode === mode));
-    }
-
-    const list = (mode === 'fans' ? r.fans : mode === 'mutual' ? r.mutual : r.notback) || [];
-    list.sort((a, b) => a.username.localeCompare(b.username, undefined, { sensitivity: 'base' }));
-    ui.list.innerHTML =
-      `<div class="empty" style="padding:8px 4px 12px;text-align:left"><b>${nf.format(
-        list.length
-      )}</b> ${
-        mode === 'fans'
-          ? 'follow you that you don\'t follow back'
-          : mode === 'mutual'
-          ? 'mutuals'
-          : 'you follow who don\'t follow you back'
-      }</div>` + rows(list);
+    if (view === 'home') renderHome();
+    else if (view === 'self') renderSelf();
+    else if (view === 'stalk') renderStalk();
+    else renderMonitor();
   }
 
-  async function runScan(kind) {
-    const pk = selfId();
-    if (!pk) {
-      ui.note.hidden = false;
-      ui.note.textContent = 'Not logged in. Open Instagram, log in, reload, then try again.';
+  function go(v) {
+    view = v;
+    ui.list.scrollTop = 0;
+    render();
+  }
+
+  // --- actions ---------------------------------------------------------------
+
+  function busy(on, stopId) {
+    run.busy = on;
+    const stop = root.querySelector('#stop');
+    const others = root.querySelectorAll('.act:not(#stop), .big, #pick, #target');
+    if (stop) stop.hidden = !on;
+    for (const el of others) el.disabled = on;
+    if (on) run.aborted = false;
+  }
+
+  function progress(p) {
+    if (p.note) {
+      setNote(p.note, true);
       return;
     }
+    ui.list.innerHTML = `<div class="empty">Read <b>${nf.format(p.count)}</b>${
+      p.expectedTotal ? ` of ${nf.format(p.expectedTotal)}` : ''
+    }…<br>pass ${p.pass}<br><br>Keep this tab open.</div>`;
+  }
 
-    state.running = true;
-    state.aborted = false;
-    ui.scan.disabled = true;
-    ui.stop.hidden = false;
-    ui.note.hidden = true;
-
+  async function scanSelf(kind) {
+    const pk = selfId();
+    if (!pk) return setNote('Not logged in. Log into Instagram, reload, and try again.', true);
+    busy(true);
+    setNote('', false);
     try {
-      const info = (await fetchUserInfo(pk)) || data.info;
-      if (info) data.info = info;
+      const info = (await fetchUserInfo(pk)) || data.self.info;
+      if (info) data.self.info = info;
       const expected = kind === 'followers' ? info && info.followers : info && info.following;
-
-      ui.list.innerHTML = '<div class="empty">Starting…</div>';
-      const out = await walkList(kind, pk, expected, (p) => {
-        if (p.note) {
-          ui.note.hidden = false;
-          ui.note.textContent = p.note;
-          return;
-        }
-        ui.list.innerHTML = `<div class="empty">Read <b>${nf.format(p.count)}</b>${
-          p.expectedTotal ? ` of ${nf.format(p.expectedTotal)}` : ''
-        }…<br>pass ${p.pass}<br><br>Keep this tab open.</div>`;
-      });
-
-      data[kind] = out.users;
-      data.at = Date.now();
-      save(data);
-      mode = 'notback';
+      const out = await walkList(kind, pk, expected, progress);
+      data.self[kind] = out.users;
+      data.self.at = Date.now();
+      if (!save()) setNote('Ran out of storage — some results may not be saved.', true);
+      selfMode = 'notback';
     } catch (e) {
-      ui.note.hidden = false;
-      ui.note.textContent = e && e.message ? e.message : String(e);
+      setNote(e && e.message ? e.message : String(e), true);
     } finally {
-      state.running = false;
-      ui.scan.disabled = false;
-      ui.stop.hidden = true;
+      busy(false);
       render();
     }
   }
+
+  async function startStalk(input) {
+    busy(true);
+    setNote('', false);
+    ui.list.innerHTML = '<div class="empty">Looking them up…</div>';
+    try {
+      const t = await resolveTarget(input);
+      const expected = t.info && t.info.following;
+      const out = await walkList('following', t.pk, expected, progress);
+      if (!out.users.length) throw new Halt('No accounts returned — the list may be hidden.', 'empty');
+
+      const r = ingest('following', t.pk, t.username, out.users, expected, out.reachedEnd && !out.aborted);
+      monKey = `following:${t.pk}`;
+      if (r.isFirst) {
+        setNote(
+          `Baseline saved — ${nf.format(r.total)} accounts. We'll keep an eye on them. Come back to Monitor to see who they add.`,
+          true
+        );
+        go('monitor');
+      } else {
+        setNote(
+          r.arrived
+            ? `${nf.format(r.arrived)} new since the last check.`
+            : 'Already watching them — nobody new.',
+          true
+        );
+        go('monitor');
+      }
+    } catch (e) {
+      setNote(e && e.message ? e.message : String(e), true);
+      ui.list.innerHTML = '<div class="empty">Nothing saved.</div>';
+    } finally {
+      busy(false);
+    }
+  }
+
+  async function checkNow() {
+    const t = data.tracks[monKey];
+    if (!t) return;
+    busy(true);
+    setNote('', false);
+    try {
+      const info = await fetchUserInfo(t.pk);
+      const expected = info && info.following;
+      if (info && info.username) t.username = info.username;
+      const out = await walkList(t.kind, t.pk, expected, progress);
+      if (!out.users.length) throw new Halt('No accounts returned — the list may be hidden.', 'empty');
+
+      const r = ingest(t.kind, t.pk, t.username, out.users, expected, out.reachedEnd && !out.aborted);
+      const bits = [r.arrived ? `${nf.format(r.arrived)} new.` : 'Nobody new.'];
+      if (r.absorbed) {
+        bits.push(`${nf.format(r.absorbed)} were missed by an earlier scan — added to the baseline, not counted as new.`);
+      }
+      if (r.departed) bits.push(`${nf.format(r.departed)} no longer followed.`);
+      render();
+      setNote(bits.join(' '), true);
+    } catch (e) {
+      setNote(e && e.message ? e.message : String(e), true);
+      render();
+    } finally {
+      busy(false);
+    }
+  }
+
+  // --- events ----------------------------------------------------------------
 
   ui.fab.addEventListener('click', () => {
     ui.sheet.hidden = false;
@@ -650,23 +1023,66 @@
   ui.close.addEventListener('click', () => {
     ui.sheet.hidden = true;
   });
-  ui.scan.addEventListener('click', () => runScan(ui.scan.dataset.kind || 'following'));
-  ui.stop.addEventListener('click', () => {
-    state.aborted = true;
-    ui.stop.disabled = true;
-    setTimeout(() => (ui.stop.disabled = false), 1500);
-  });
-  ui.tabs.addEventListener('click', (e) => {
-    const t = e.target.closest('.tab');
-    if (!t) return;
-    mode = t.dataset.mode;
-    ui.list.scrollTop = 0;
-    render();
+  ui.back.addEventListener('click', () => go('home'));
+
+  root.addEventListener('click', (e) => {
+    const goBtn = e.target.closest('[data-go]');
+    if (goBtn) return go(goBtn.dataset.go);
+
+    const tab = e.target.closest('.tab');
+    if (tab) {
+      selfMode = tab.dataset.m;
+      ui.list.scrollTop = 0;
+      return render();
+    }
+
+    const id = e.target.id;
+    if (id === 'scan') {
+      const s = data.self;
+      const following = s.following || [];
+      const tagged = following.filter((u) => u.followsYou != null);
+      const direct = following.length && tagged.length / following.length >= 0.9;
+      return scanSelf(following.length && !direct && !s.followers ? 'followers' : 'following');
+    }
+    if (id === 'start') return startStalk(root.querySelector('#target').value);
+    if (id === 'check') return checkNow();
+    if (id === 'stop') {
+      run.aborted = true;
+      return;
+    }
+    if (id === 'del') {
+      const t = data.tracks[monKey];
+      if (!t) return;
+      if (e.target.dataset.armed) {
+        delete data.tracks[monKey];
+        monKey = null;
+        save();
+        return render();
+      }
+      e.target.dataset.armed = '1';
+      e.target.textContent = 'Sure?';
+      setTimeout(() => {
+        delete e.target.dataset.armed;
+        e.target.textContent = '✕';
+      }, 3000);
+    }
   });
 
-  // Warn before a reload throws away a scan in progress.
+  root.addEventListener('change', (e) => {
+    if (e.target.id === 'pick') {
+      monKey = e.target.value;
+      ui.list.scrollTop = 0;
+      render();
+    }
+  });
+
+  root.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && e.target.id === 'target') startStalk(e.target.value);
+  });
+
+  // A scan lost to a reload means starting over, so make it deliberate.
   window.addEventListener('beforeunload', (e) => {
-    if (!state.running) return;
+    if (!run.busy) return;
     e.preventDefault();
     e.returnValue = '';
   });
@@ -680,7 +1096,6 @@
   } else {
     mount();
   }
-  // Instagram is a single-page app and re-renders the body on navigation, so
-  // re-attach if our host gets swept away.
+  // Instagram is a single-page app and re-renders the body on navigation.
   setInterval(mount, 3000);
 })();
