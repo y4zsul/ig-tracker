@@ -28,8 +28,10 @@
   --line: rgba(255, 255, 255, 0.3); /* the rim */
   --line-soft: rgba(255, 255, 255, 0.12);
 
+  /* Monochromatic pink: hot pink into the lighter pink the mobile button
+     used. No violet anywhere in the ramp. */
   --accent: #ff7ab8;
-  --accent-2: #c58cf5;
+  --accent-2: #ff9ecb;
   --accent-soft: rgba(255, 255, 255, 0.16);
 
   --ok: #5ee0ad;
@@ -97,7 +99,7 @@ body {
       rgba(255, 95, 168, 0.85) 0%,
       transparent 60%
     ),
-    radial-gradient(52% 34% at 98% 20%, rgba(168, 85, 247, 0.68) 0%, transparent 62%),
+    radial-gradient(52% 34% at 98% 20%, rgba(255, 168, 212, 0.6) 0%, transparent 62%),
     radial-gradient(58% 40% at 22% 99%, rgba(255, 143, 196, 0.5) 0%, transparent 60%);
   background-attachment: fixed;
 }

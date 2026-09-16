@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.2.0
+// @version      2.2.1
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -599,7 +599,7 @@
         --line: rgba(255,255,255,.30);    /* the rim */
         --line-soft: rgba(255,255,255,.12);
         --accent: #ff7ab8;
-        --accent2: #c58cf5;
+        --accent2: #ff9ecb;
         --accent-soft: rgba(255,255,255,.16);
         --r: 16px;
         --r-lg: 22px;
@@ -623,7 +623,7 @@
         z-index: 2147483000;
         width: 58px; height: 58px; border-radius: 50%;
         border: 3px solid rgba(255,255,255,.75);
-        background: linear-gradient(135deg, #ff9ecb, #ff7ab8 50%, #c58cf5);
+        background: linear-gradient(135deg, #ffb6dc, #ff7ab8 55%, #ff5fa8);
         color: #fff; font-size: 24px;
         box-shadow: 0 8px 24px rgba(255, 90, 170, .5), 0 2px 8px rgba(10,2,9,.4);
         cursor: pointer;
@@ -641,7 +641,7 @@
         background-color: var(--bg); color: var(--fg);
         background-image:
           radial-gradient(58% 26% at 6% 2%, rgba(255,95,168,.85) 0%, transparent 60%),
-          radial-gradient(52% 22% at 98% 18%, rgba(168,85,247,.68) 0%, transparent 62%),
+          radial-gradient(52% 22% at 98% 18%, rgba(255,168,212,.6) 0%, transparent 62%),
           radial-gradient(58% 26% at 22% 99%, rgba(255,143,196,.5) 0%, transparent 60%);
         padding-top: env(safe-area-inset-top, 0px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
