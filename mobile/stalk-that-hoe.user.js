@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.2.1
+// @version      1.3.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -710,6 +710,14 @@
         display: block; width: 100%; height: auto;
         max-height: 68vh; object-fit: contain; background: #000;
       }
+      .story-acts { display: flex; gap: 8px; padding: 8px 10px; }
+      .story-acts a, .story-acts button {
+        flex: 1; text-align: center; padding: 9px 6px;
+        font-size: 12px; font-weight: 700; text-decoration: none;
+        border-radius: 9px; border: 1px solid #e0357f; color: #e0357f;
+        background: transparent; cursor: pointer; font-family: inherit;
+      }
+      .story-acts a:active, .story-acts button:active { background: rgba(224,53,127,.12); }
     </style>
 
     <button class="fab">✌︎</button>
@@ -1103,7 +1111,17 @@
       return;
     }
 
-    setNote('Loaded without a seen receipt.', true);
+    setNote(
+      'Loaded without a seen receipt. To keep a photo, press and hold it → Add to Photos. For video, use Save below, then Download Linked File.',
+      true
+    );
+
+    const stamp = (ms) => {
+      const d = new Date(ms || Date.now());
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`;
+    };
+
     ui.list.innerHTML = stories.items
       .map((it, i) => {
         const when = it.takenAt
@@ -1117,10 +1135,25 @@
               it.image ? ` poster="${esc(it.image)}"` : ''
             } src="${esc(it.video)}"></video>`
           : `<img class="story-media" loading="lazy" src="${esc(it.image)}" alt="">`;
+
+        const url = it.isVideo ? it.video : it.image;
+        const name = `${stories.username || 'story'}-${i + 1}-${stamp(it.takenAt)}.${
+          it.isVideo ? 'mp4' : 'jpg'
+        }`;
+        // A plain link, not a scripted download. `download` is ignored for
+        // cross-origin URLs, but the link still opens the raw media, where
+        // iOS offers Add to Photos / Save to Files — and long-pressing the
+        // link itself offers Download Linked File.
+        const acts =
+          `<div class="story-acts">` +
+          `<a href="${esc(url)}" download="${esc(name)}" target="_blank" rel="noreferrer noopener">Save</a>` +
+          `<button data-copy="${esc(url)}">Copy link</button>` +
+          `</div>`;
+
         return (
           `<div class="story"><div class="story-head">` +
           `<span>${i + 1} of ${stories.items.length}</span>` +
-          `<span>${esc(when)}${it.isVideo ? ' · video' : ''}</span></div>${media}</div>`
+          `<span>${esc(when)}${it.isVideo ? ' · video' : ''}</span></div>${media}${acts}</div>`
         );
       })
       .join('');
@@ -1288,6 +1321,25 @@
       else selfMode = tab.dataset.m;
       ui.list.scrollTop = 0;
       return render();
+    }
+
+    const copy = e.target.closest('[data-copy]');
+    if (copy) {
+      // Called straight out of the tap, with no await before it, so the
+      // clipboard write still counts as a user gesture.
+      const done = () => {
+        copy.textContent = 'Copied';
+        setTimeout(() => (copy.textContent = 'Copy link'), 1500);
+      };
+      try {
+        navigator.clipboard.writeText(copy.dataset.copy).then(done, () => {
+          copy.textContent = 'Copy failed';
+          setTimeout(() => (copy.textContent = 'Copy link'), 1500);
+        });
+      } catch (_) {
+        copy.textContent = 'Copy failed';
+      }
+      return;
     }
 
     const id = e.target.id;
