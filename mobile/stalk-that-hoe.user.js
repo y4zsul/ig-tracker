@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.5.0
+// @version      1.5.1
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -1535,6 +1535,22 @@
     ui.list.scrollTop = 0;
     render();
   });
+
+  /**
+   * Keep our keystrokes inside the panel.
+   *
+   * Instagram binds single letters to page shortcuts, and such handlers decide
+   * "is the user typing?" by looking at document.activeElement. Shadow DOM
+   * retargets that to the host element, so the page sees focus on a plain div,
+   * treats the keypress as a shortcut and calls preventDefault() — which ate
+   * specific letters as they were typed into our inputs.
+   *
+   * stopPropagation does not affect other listeners on this same node, so the
+   * Enter handler below still runs.
+   */
+  for (const type of ['keydown', 'keypress', 'keyup']) {
+    root.addEventListener(type, (e) => e.stopPropagation());
+  }
 
   root.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
