@@ -980,6 +980,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           case 'profile':
             onProfile(p);
             break;
+          case 'stories:result':
+          case 'stories:error':
+            broadcast({ type: 'IGFO_STORIES', payload: p });
+            break;
           case 'ready':
             if (p.selfId && state.selfId !== p.selfId) {
               state.selfId = p.selfId;
@@ -1003,6 +1007,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             break;
         }
         sendResponse({ ok: true });
+        return;
+      }
+
+      case 'IGFO_STORIES': {
+        const u = String(message.username || '').replace(/^@/, '').trim();
+        const targetId = /^\d{3,}$/.test(u) ? u : state.ids[u.toLowerCase()] || null;
+        sendResponse(
+          await sendToPage({ type: 'stories', username: u || null, targetId })
+        );
         return;
       }
 

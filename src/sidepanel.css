@@ -284,6 +284,57 @@ button.big {
   border-radius: var(--r-lg);
 }
 
+/* Informational, not a problem — deliberately quiet so an incomplete capture
+   does not read as an error. */
+.note {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  padding: 7px 9px;
+  border-radius: var(--r-md);
+  background: var(--line-soft);
+  border: 1px solid var(--line);
+}
+
+.note[hidden] {
+  display: none;
+}
+
+/* --- stories --- */
+
+.story {
+  margin: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.story-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 9px;
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.story-media {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+  background: #000;
+}
+
+/* The home list grows with each feature; let it scroll rather than clip. */
+.home {
+  overflow-y: auto;
+}
+
 /* --- my account scan rows --- */
 
 .scanrow {

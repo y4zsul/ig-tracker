@@ -19,9 +19,24 @@ const els = {
   screenNew: $('screenNew'),
   screenMon: $('screenMon'),
   screenSelf: $('screenSelf'),
+  screenCompare: $('screenCompare'),
   newStalkBtn: $('newStalkBtn'),
   monitorBtn: $('monitorBtn'),
   selfBtn: $('selfBtn'),
+  compareBtn: $('compareBtn'),
+  storiesBtn: $('storiesBtn'),
+  screenStories: $('screenStories'),
+  storyUser: $('storyUser'),
+  storyLoadBtn: $('storyLoadBtn'),
+  storyStatus: $('storyStatus'),
+
+  cmpA: $('cmpA'),
+  cmpB: $('cmpB'),
+  cmpKind: $('cmpKind'),
+  cmpMode: $('cmpMode'),
+  cmpCounts: $('cmpCounts'),
+  cmpNote: $('cmpNote'),
+  cmpRescanBtn: $('cmpRescanBtn'),
 
   selfTitle: $('selfTitle'),
   selfCounts: $('selfCounts'),
@@ -132,12 +147,14 @@ function show(next) {
   els.screenNew.hidden = next !== 'new';
   els.screenMon.hidden = next !== 'monitor';
   els.screenSelf.hidden = next !== 'self';
+  els.screenCompare.hidden = next !== 'compare';
+  els.screenStories.hidden = next !== 'stories';
 
-  els.activity.hidden = next === 'home';
+  els.activity.hidden = next === 'home' || next === 'compare' || next === 'stories';
   els.viewport.hidden = next !== 'new';
-  // monList is the generic scrolling results container, shared by both
-  // list-rendering screens.
-  els.monList.hidden = next !== 'monitor' && next !== 'self';
+  // monList is the generic scrolling results container, shared by every
+  // list-rendering screen.
+  els.monList.hidden = next === 'home' || next === 'new';
   if (next !== 'monitor') els.monCounts.hidden = true;
   els.empty.hidden = true;
 
@@ -276,10 +293,26 @@ function sideQuality(track) {
     hour: '2-digit',
     minute: '2-digit',
   });
-  if (last.full === false) {
-    return { ok: false, when, reason: `incomplete (${nf.format(last.count)} of ${nf.format(last.expectedTotal)})` };
+
+  // Judge the ACCUMULATED membership, not the last run alone. Every capture
+  // unions into the same record, so a track can hold more than any single run
+  // collected — scoring the last run understated what is actually stored.
+  const have = members(track).length;
+  const want = last.expectedTotal;
+  if (want != null && want > 0) {
+    const shortBy = want - have;
+    // A small permanent gap is expected: the reported count includes
+    // deactivated accounts that are never returned by the list endpoint.
+    if (shortBy > Math.max(5, want * 0.02)) {
+      return {
+        ok: false,
+        when,
+        short: shortBy,
+        reason: `${nf.format(have)} of ${nf.format(want)}, ${when}`,
+      };
+    }
   }
-  return { ok: true, when, reason: `${nf.format(members(track).length)} accounts, ${when}` };
+  return { ok: true, when, reason: `${nf.format(have)} accounts, ${when}` };
 }
 
 function renderSelf() {
@@ -376,26 +409,290 @@ function renderSelf() {
   paintSelfList(list, mode);
 }
 
-function paintSelfList(list, mode) {
-
+/** Shared renderer for any flat, headed list of accounts. */
+function paintList(list, label, emptyHtml) {
   if (!list.length) {
     els.monList.innerHTML = '';
     els.empty.hidden = false;
-    els.empty.innerHTML = '<p><strong>Nobody here.</strong></p>';
+    els.empty.innerHTML = emptyHtml || '<p><strong>Nobody here.</strong></p>';
     return;
   }
-
   els.empty.hidden = true;
+  els.monList.innerHTML =
+    `<div class="ghead"><span class="gtime">${esc(label)}</span></div>` +
+    `<div class="gbody">${list.map((u) => userRowHtml(u)).join('')}</div>`;
+}
+
+function paintSelfList(list, mode) {
   const label =
     mode === 'notback'
       ? `${nf.format(list.length)} you follow who don't follow you back`
       : mode === 'fans'
       ? `${nf.format(list.length)} who follow you that you don't follow back`
       : `${nf.format(list.length)} mutuals`;
+  paintList(list, label);
+}
 
-  els.monList.innerHTML =
-    `<div class="ghead"><span class="gtime">${esc(label)}</span></div>` +
-    `<div class="gbody">${list.map((u) => userRowHtml(u)).join('')}</div>`;
+// --- stories -----------------------------------------------------------------
+
+const storyTime = new Intl.DateTimeFormat(undefined, {
+  weekday: 'short',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+function renderStories(p) {
+  if (p.type === 'stories:error') {
+    els.storyStatus.textContent = p.message;
+    els.monList.innerHTML = '';
+    els.empty.hidden = true;
+    return;
+  }
+
+  const who = p.username ? `@${p.username}` : p.targetId;
+  if (!p.items.length) {
+    els.storyStatus.textContent = '';
+    els.monList.innerHTML = '';
+    els.empty.hidden = false;
+    els.empty.innerHTML = `<p><strong>${esc(who)} has no active story.</strong></p>
+      <p class="fine">Stories expire after 24 hours.</p>`;
+    return;
+  }
+
+  els.empty.hidden = true;
+  const expires = p.items.reduce((m, i) => Math.max(m, i.expiringAt || 0), 0);
+  els.storyStatus.textContent =
+    `${nf.format(p.items.length)} item${p.items.length === 1 ? '' : 's'} from ${who}` +
+    (expires ? ` · oldest expires ${storyTime.format(new Date(expires))}` : '');
+
+  const cards = p.items
+    .map((it, i) => {
+      const when = it.takenAt ? storyTime.format(new Date(it.takenAt)) : '';
+      // preload="none" so opening the list does not pull every video at once.
+      const media = it.isVideo
+        ? `<video class="story-media" controls preload="none"${
+            it.image ? ` poster="${esc(it.image)}"` : ''
+          } src="${esc(it.video)}"></video>`
+        : `<img class="story-media" loading="lazy" src="${esc(it.image)}" alt="">`;
+      return (
+        `<div class="story">` +
+        `<div class="story-head"><span>${i + 1} of ${p.items.length}</span>` +
+        `<span>${esc(when)}${it.isVideo ? ' · video' : ''}</span></div>` +
+        media +
+        `</div>`
+      );
+    })
+    .join('');
+
+  els.monList.innerHTML = cards;
+  els.monList.scrollTop = 0;
+}
+
+async function loadStories() {
+  const name = els.storyUser.value.replace(/^@/, '').trim();
+  if (!name) {
+    els.storyUser.focus();
+    els.storyStatus.textContent = 'Enter a username first.';
+    return;
+  }
+  els.storyLoadBtn.disabled = true;
+  els.storyLoadBtn.textContent = 'Loading…';
+  els.storyStatus.textContent = `Fetching ${name}'s story…`;
+  els.monList.innerHTML = '';
+  els.empty.hidden = true;
+
+  const res = await send({ type: 'IGFO_STORIES', username: name });
+  if (!res.ok) {
+    els.storyStatus.textContent = res.error || 'Could not reach the Instagram tab.';
+    els.storyLoadBtn.disabled = false;
+    els.storyLoadBtn.textContent = 'Load';
+  }
+  // The result arrives as IGFO_STORIES.
+}
+
+// --- compare two accounts ----------------------------------------------------
+
+const trackCache = new Map();
+
+async function getTrack(key) {
+  if (trackCache.has(key)) return trackCache.get(key);
+  const res = await send({ type: 'IGFO_GET_TRACK', key });
+  const data = res.ok
+    ? { summary: res.summary, accounts: res.accounts, snapshots: res.snapshots }
+    : null;
+  trackCache.set(key, data);
+  return data;
+}
+
+/** One entry per watched account, regardless of which lists were captured. */
+function comparableTargets() {
+  const seen = new Map();
+  for (const t of tracks) {
+    if (!t.targetId) continue;
+    if (!seen.has(t.targetId)) {
+      seen.set(t.targetId, { targetId: t.targetId, username: t.username, kinds: new Set() });
+    }
+    seen.get(t.targetId).kinds.add(t.kind);
+  }
+  return [...seen.values()].sort((a, b) =>
+    String(a.username || a.targetId).localeCompare(String(b.username || b.targetId))
+  );
+}
+
+function fillTargetSelect(sel, targets, keep) {
+  const prev = keep || sel.value;
+  sel.textContent = '';
+  if (!targets.length) {
+    const o = document.createElement('option');
+    o.value = '';
+    o.textContent = 'Nothing captured yet';
+    sel.append(o);
+    sel.disabled = true;
+    return;
+  }
+  sel.disabled = false;
+  for (const t of targets) {
+    const o = document.createElement('option');
+    o.value = t.targetId;
+    o.textContent = t.username ? `@${t.username}` : t.targetId;
+    sel.append(o);
+  }
+  if (prev && targets.some((t) => t.targetId === prev)) sel.value = prev;
+}
+
+/**
+ * Scanning only happens on the stalk screen, and there is no scan button here,
+ * which is genuinely confusing. Rather than explain the navigation, offer a
+ * button that performs it and pre-fills the target.
+ */
+function offerRescan(targetId, kind, verb) {
+  if (!targetId) {
+    els.cmpRescanBtn.hidden = true;
+    return;
+  }
+  const t = comparableTargets().find((x) => x.targetId === targetId);
+  const who = t && t.username ? `@${t.username}` : targetId;
+  els.cmpRescanBtn.hidden = false;
+  els.cmpRescanBtn.textContent = `${verb} ${who} on the stalk page`;
+  els.cmpRescanBtn.onclick = () => {
+    els.username.value = targetId;
+    els.kind.value = kind;
+    show('new');
+    setStatus(`${who} is filled in — press Start stalk.`, true);
+    els.startBtn.focus();
+  };
+}
+
+async function renderCompare() {
+  const targets = comparableTargets();
+  fillTargetSelect(els.cmpA, targets);
+  fillTargetSelect(els.cmpB, targets);
+
+  // Default the second picker to something other than the first.
+  if (targets.length > 1 && els.cmpB.value === els.cmpA.value) {
+    const other = targets.find((t) => t.targetId !== els.cmpA.value);
+    if (other) els.cmpB.value = other.targetId;
+  }
+
+  const kind = els.cmpKind.value;
+  const aId = els.cmpA.value;
+  const bId = els.cmpB.value;
+
+  if (!aId || !bId) {
+    els.cmpCounts.hidden = true;
+    els.cmpRescanBtn.hidden = true;
+    els.cmpNote.hidden = false;
+    els.cmpNote.textContent =
+      'Capture at least two accounts first — use Start a new stalk on each of them.';
+    els.monList.innerHTML = '';
+    els.empty.hidden = true;
+    return;
+  }
+  if (aId === bId) {
+    els.cmpCounts.hidden = true;
+    els.cmpRescanBtn.hidden = true;
+    els.cmpNote.hidden = false;
+    els.cmpNote.textContent = 'Pick two different accounts.';
+    els.monList.innerHTML = '';
+    els.empty.hidden = true;
+    return;
+  }
+
+  const [ta, tb] = await Promise.all([
+    getTrack(`${kind}:${aId}`),
+    getTrack(`${kind}:${bId}`),
+  ]);
+
+  const nameOf = (id) => {
+    const t = targets.find((x) => x.targetId === id);
+    return t && t.username ? `@${t.username}` : id;
+  };
+
+  const missing = [];
+  const missingIds = [];
+  if (!ta) {
+    missing.push(nameOf(aId));
+    missingIds.push(aId);
+  }
+  if (!tb) {
+    missing.push(nameOf(bId));
+    missingIds.push(bId);
+  }
+  if (missing.length) {
+    els.cmpCounts.hidden = true;
+    els.cmpNote.hidden = false;
+    els.cmpNote.textContent = `No ${kind} capture for ${missing.join(' or ')} yet.`;
+    // Send them straight there rather than describing where to go.
+    offerRescan(missing.length === 1 ? missingIds[0] : null, kind, 'Capture it');
+    els.monList.innerHTML = '';
+    els.empty.hidden = true;
+    return;
+  }
+
+  const A = members(ta);
+  const B = members(tb);
+  const bPks = new Set(B.map((u) => u.pk));
+  const aPks = new Set(A.map((u) => u.pk));
+
+  const shared = A.filter((u) => bPks.has(u.pk)).sort(byName);
+  const onlyA = A.filter((u) => !bPks.has(u.pk)).sort(byName);
+  const onlyB = B.filter((u) => !aPks.has(u.pk)).sort(byName);
+
+  const part = (n, label) => `<span><b>${nf.format(n)}</b>${label}</span>`;
+  els.cmpCounts.innerHTML =
+    part(shared.length, 'in both') + part(A.length, 'first') + part(B.length, 'second');
+  els.cmpCounts.hidden = false;
+
+  // Followers captures truncate on larger accounts, so an overlap computed
+  // from them understates — say so rather than presenting a clean number.
+  const qa = sideQuality(ta);
+  const qb = sideQuality(tb);
+  if (!qa.ok || !qb.ok) {
+    // Everyone shown really is shared; only omissions are possible. Keep this
+    // quiet and factual — it is a completeness note, not a failure.
+    const shortest = !qa.ok && (qb.ok || (qa.short || 0) >= (qb.short || 0)) ? aId : bId;
+    els.cmpNote.hidden = false;
+    els.cmpNote.textContent =
+      `At least this many — a few may be missing. ${nameOf(aId)} ${qa.reason}, ${nameOf(bId)} ${
+        qb.reason
+      }.`;
+    offerRescan(shortest, kind, 'Re-scan');
+  } else {
+    els.cmpNote.hidden = true;
+    els.cmpRescanBtn.hidden = true;
+  }
+
+  const mode = els.cmpMode.value;
+  const list = mode === 'onlyA' ? onlyA : mode === 'onlyB' ? onlyB : shared;
+  const verb = kind === 'following' ? 'followed by' : 'following';
+  const label =
+    mode === 'onlyA'
+      ? `${nf.format(list.length)} only ${verb} ${nameOf(aId)}`
+      : mode === 'onlyB'
+      ? `${nf.format(list.length)} only ${verb} ${nameOf(bId)}`
+      : `${nf.format(list.length)} ${verb} both`;
+
+  paintList(list, label, '<p><strong>No overlap at all.</strong></p>');
 }
 
 async function loadSelf() {
@@ -559,7 +856,11 @@ function render() {
     renderGroups();
   } else if (screen === 'self') {
     renderSelf();
+  } else if (screen === 'compare') {
+    renderCompare();
   }
+  // 'stories' paints on demand from its own handler — re-rendering here would
+  // tear down a playing video every time the service worker pushes state.
 }
 
 // --- loading -----------------------------------------------------------------
@@ -658,6 +959,13 @@ chrome.runtime.onMessage.addListener((message) => {
         setStatus(bits.join(' '), true);
       }
     })();
+    return;
+  }
+
+  if (message.type === 'IGFO_STORIES') {
+    els.storyLoadBtn.disabled = false;
+    els.storyLoadBtn.textContent = 'Load';
+    if (screen === 'stories') renderStories(message.payload);
     return;
   }
 
@@ -878,6 +1186,34 @@ els.selfBtn.addEventListener('click', async () => {
   }
 });
 
+els.storiesBtn.addEventListener('click', () => {
+  els.storyStatus.textContent = '';
+  els.monList.innerHTML = '';
+  show('stories');
+  els.empty.hidden = false;
+  els.empty.innerHTML =
+    '<p class="fine">Enter a username and press Load.</p>';
+  els.storyUser.focus();
+});
+
+els.storyLoadBtn.addEventListener('click', loadStories);
+els.storyUser.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') loadStories();
+});
+
+els.compareBtn.addEventListener('click', async () => {
+  trackCache.clear(); // captures may have changed since last visit
+  await loadTracks();
+  show('compare');
+});
+
+for (const el of [els.cmpA, els.cmpB, els.cmpKind, els.cmpMode]) {
+  el.addEventListener('change', () => {
+    els.monList.scrollTop = 0;
+    renderCompare();
+  });
+}
+
 els.selfMode.addEventListener('change', () => {
   els.monList.scrollTop = 0;
   renderSelf();
@@ -934,6 +1270,7 @@ els.monDeleteBtn.addEventListener('click', async () => {
 try {
   els.ver.textContent = `v${chrome.runtime.getManifest().version}`;
 } catch (_) {}
+
 
 show('home');
 loadState();

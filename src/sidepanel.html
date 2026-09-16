@@ -12,6 +12,8 @@
       <button id="newStalkBtn" class="big primary">Start a new stalk</button>
       <button id="monitorBtn" class="big">Monitor a user</button>
       <button id="selfBtn" class="big">My account</button>
+      <button id="compareBtn" class="big">Compare two accounts</button>
+      <button id="storiesBtn" class="big">Watch stories quietly</button>
       <p class="fine">
         A first capture records who someone follows right now. Every capture after that
         reveals who they have added since — dated to when you checked.
@@ -106,6 +108,66 @@
             <option value="mutual">Mutuals</option>
           </select>
         </div>
+      </div>
+    </section>
+
+    <!-- ── compare two accounts ─────────────────────────────────────────── -->
+    <section id="screenCompare" class="screen" hidden>
+      <div class="bar">
+        <div class="row">
+          <button class="back" data-home title="Back">&#8592;</button>
+          <strong class="grow">Compare two accounts</strong>
+        </div>
+        <div class="scanrow">
+          <span class="scanlabel">First</span>
+          <select id="cmpA" class="grow" aria-label="First account"></select>
+        </div>
+        <div class="scanrow">
+          <span class="scanlabel">Second</span>
+          <select id="cmpB" class="grow" aria-label="Second account"></select>
+        </div>
+        <div class="row">
+          <select id="cmpKind" class="grow" aria-label="Which list to compare">
+            <option value="following">Compare who they follow</option>
+            <option value="followers">Compare who follows them</option>
+          </select>
+        </div>
+        <div id="cmpCounts" class="counts" hidden></div>
+        <div id="cmpNote" class="note" hidden></div>
+        <button id="cmpRescanBtn" class="small" hidden></button>
+        <div class="row">
+          <select id="cmpMode" class="grow" aria-label="What to show">
+            <option value="shared">In both</option>
+            <option value="onlyA">Only in the first</option>
+            <option value="onlyB">Only in the second</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── stories ──────────────────────────────────────────────────────── -->
+    <section id="screenStories" class="screen" hidden>
+      <div class="bar">
+        <div class="row">
+          <button class="back" data-home title="Back">&#8592;</button>
+          <strong class="grow">Watch stories quietly</strong>
+        </div>
+        <div class="row">
+          <input
+            id="storyUser"
+            class="grow"
+            type="text"
+            placeholder="username"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <button id="storyLoadBtn" class="primary">Load</button>
+        </div>
+        <div id="storyNote" class="note">
+          Loads their story without sending a seen receipt, so you should not appear in their
+          viewer list. Do not open the same story in Instagram itself afterwards — that will.
+        </div>
+        <div id="storyStatus" class="status"></div>
       </div>
     </section>
 

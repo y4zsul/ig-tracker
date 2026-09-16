@@ -820,6 +820,112 @@
     post({ type: 'probe:done' });
   }
 
+  // --- stories -------------------------------------------------------------
+  //
+  // Viewing a story and MARKING IT SEEN are two different requests. The media
+  // arrives from the reels endpoint; the read receipt is a separate
+  // /api/v1/media/seen/ POST the app sends afterwards. This code fetches the
+  // reel and never sends that POST, which is the whole trick — there is no
+  // "anonymous" flag, just an omitted request.
+  //
+  // Nothing here may ever POST to media/seen, or call the page's own wrapped
+  // fetch in a way that lets Instagram's client do it for us.
+
+  function bestUrl(list) {
+    if (!Array.isArray(list) || !list.length) return null;
+    // Candidates are ordered largest-first in practice; pick by width anyway.
+    let best = list[0];
+    for (const c of list) {
+      if (c && typeof c.width === 'number' && c.width > (best.width || 0)) best = c;
+    }
+    return best && best.url ? String(best.url) : null;
+  }
+
+  function shapeStoryItem(it) {
+    const image = bestUrl(it.image_versions2 && it.image_versions2.candidates);
+    const video = bestUrl(it.video_versions);
+    return {
+      id: String(it.pk || it.id || ''),
+      takenAt: typeof it.taken_at === 'number' ? it.taken_at * 1000 : null,
+      expiringAt: typeof it.expiring_at === 'number' ? it.expiring_at * 1000 : null,
+      isVideo: !!video || it.media_type === 2,
+      image,
+      video,
+      duration: typeof it.video_duration === 'number' ? it.video_duration : null,
+    };
+  }
+
+  function parseReel(json, targetId) {
+    let reel = null;
+    if (Array.isArray(json.reels_media) && json.reels_media.length) {
+      reel = json.reels_media[0];
+    } else if (json.reels && typeof json.reels === 'object') {
+      reel = json.reels[targetId] || Object.values(json.reels)[0] || null;
+    } else if (json.reel) {
+      reel = json.reel;
+    }
+    if (!reel || !Array.isArray(reel.items)) return null;
+    return {
+      username: reel.user && reel.user.username ? String(reel.user.username) : null,
+      items: reel.items.map(shapeStoryItem).filter((i) => i.image || i.video),
+    };
+  }
+
+  async function loadStories(cmd) {
+    try {
+      let targetId = cmd.targetId || null;
+      let username = cmd.username || null;
+
+      if (!targetId && username) {
+        const scraped = scrapeUserId(username);
+        if (scraped) targetId = scraped;
+      }
+      if (!targetId) {
+        if (!username) throw new Halt('No target given.', 'input');
+        const p = await resolveProfile(String(username).replace(/^@/, '').trim());
+        targetId = p.id;
+        username = p.username;
+        if (p.isPrivate && p.followedByViewer === false && selfId() !== p.id) {
+          throw new Halt(
+            `@${p.username} is private and you do not follow them — their stories are not visible.`,
+            'private'
+          );
+        }
+      }
+
+      const json = await apiGet(
+        `/api/v1/feed/reels_media/?reel_ids=${encodeURIComponent(targetId)}`
+      );
+      const reel = parseReel(json, String(targetId));
+
+      if (!reel || !reel.items.length) {
+        post({
+          type: 'stories:result',
+          targetId,
+          username: (reel && reel.username) || username,
+          items: [],
+          at: Date.now(),
+        });
+        return;
+      }
+
+      post({
+        type: 'stories:result',
+        targetId,
+        username: reel.username || username,
+        items: reel.items,
+        at: Date.now(),
+      });
+    } catch (e) {
+      const halt = e instanceof Halt;
+      post({
+        type: 'stories:error',
+        message: halt ? e.message : `Unexpected error: ${e && e.message ? e.message : e}`,
+        kind: halt ? e.kind : 'unknown',
+      });
+    }
+  }
+
   let activeRun = null; // { id, aborted }
 
   async function collect(cmd) {
@@ -1164,6 +1270,8 @@
           return;
         }
         collect(cmd);
+      } else if (cmd.type === 'stories') {
+        loadStories(cmd);
       } else if (cmd.type === 'diag') {
         diagnose(cmd);
       } else if (cmd.type === 'probe') {
