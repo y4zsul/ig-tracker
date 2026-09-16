@@ -1,51 +1,61 @@
 /* ==========================================================================
    InstaLurk — side panel
-   Pink-leaning, soft-surface theme. Light and dark are defined as the same
-   token set so every component is written once.
+
+   Soft-pastel theme: a tinted page ground with white and cream cards floating
+   on it, generous corner radii, pill-shaped controls. Light and dark are the
+   same token set so every component is written once.
    ========================================================================== */
 
 :root {
-  --bg: #fff8fb;
-  --bg-2: #ffeef6;
+  --bg: #fde9f2;
+  --bg-2: #fff4f9;
   --surface: #ffffff;
-  --fg: #2b1b25;
-  --muted: #8d7683;
-  --line: #f4dde9;
-  --line-soft: #faecf3;
+  --surface-2: #fff6e4; /* cream — the second surface, for quiet blocks */
+  --fg: #4a2436;
+  --muted: #a5798e;
+  --line: #f7cfe1;
+  --line-soft: #fde8f1;
 
-  --accent: #e0357f;
-  --accent-2: #a34ae0;
-  --accent-soft: #fdeaf3;
+  --accent: #e2478d;
+  --accent-2: #b167da;
+  --accent-soft: #ffe6f1;
 
-  --ok: #17845f;
+  --ok: #14805c;
   --warn: #9a5b00;
-  --warn-bg: #fff5e6;
-  --warn-line: #f3d9ab;
+  --warn-bg: #fff4e0;
+  --warn-line: #f4d7a4;
   --bad: #d8365b;
 
-  --shadow-sm: 0 1px 2px rgba(112, 32, 71, 0.06);
-  --shadow-md: 0 4px 14px rgba(112, 32, 71, 0.1);
-  --shadow-lg: 0 10px 30px rgba(112, 32, 71, 0.16);
+  --shadow-sm: 0 1px 2px rgba(150, 60, 105, 0.07);
+  --shadow-md: 0 4px 12px rgba(150, 60, 105, 0.12);
+  --shadow-lg: 0 10px 26px rgba(150, 60, 105, 0.18);
 
-  --r-sm: 8px;
-  --r-md: 11px;
-  --r-lg: 16px;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 22px;
+  --r-pill: 999px;
   --row-h: 56px;
+
+  /* Rounded display face where the platform has one (SF Rounded on macOS);
+     Trebuchet is the friendliest thing reliably present on Windows. */
+  --font-display: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display",
+    "Trebuchet MS", system-ui, sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #15111a;
-    --bg-2: #1b1622;
-    --surface: #1f1926;
-    --fg: #f3eaf1;
-    --muted: #a1919e;
-    --line: #322838;
-    --line-soft: #271f2d;
+    --bg: #17121b;
+    --bg-2: #1e1724;
+    --surface: #241c2b;
+    --surface-2: #2c2130;
+    --fg: #f6eaf2;
+    --muted: #ac96a6;
+    --line: #3b2e41;
+    --line-soft: #2c2333;
 
-    --accent: #ff74b1;
-    --accent-2: #bb7cf0;
-    --accent-soft: #2c1e2c;
+    --accent: #ff7fb8;
+    --accent-2: #c08bf5;
+    --accent-soft: #3a2337;
 
     --ok: #4ecc9d;
     --warn: #f0c887;
@@ -74,9 +84,9 @@ body {
   flex-direction: column;
   background: var(--bg);
   background-image: radial-gradient(
-    120% 55% at 50% 0%,
+    130% 60% at 50% 0%,
     var(--bg-2) 0%,
-    transparent 62%
+    transparent 70%
   );
   color: var(--fg);
   font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
@@ -101,7 +111,7 @@ body {
 
 ::-webkit-scrollbar-thumb {
   background: var(--line);
-  border-radius: 99px;
+  border-radius: var(--r-pill);
   border: 2px solid transparent;
   background-clip: content-box;
 }
@@ -126,22 +136,23 @@ body {
   display: none;
 }
 
+/* Every control block is a card floating on the tinted ground rather than a
+   full-bleed strip with a rule under it. */
 .bar {
   flex: 0 0 auto;
-  padding: 10px;
+  margin: 10px 10px 0;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  border-bottom: 1px solid var(--line);
-}
-
-.bar:last-of-type {
-  border-bottom: none;
+  gap: 9px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 .activity {
-  padding-top: 0;
-  gap: 7px;
+  gap: 8px;
 }
 
 .activity:not([hidden]):empty {
@@ -159,6 +170,13 @@ body {
   min-width: 0;
 }
 
+/* Section title inside a card header. */
+.bar strong {
+  font-family: var(--font-display);
+  font-size: 15px;
+  letter-spacing: -0.01em;
+}
+
 /* --- home ---------------------------------------------------------------- */
 
 .home {
@@ -166,17 +184,19 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 11px;
-  padding: 26px 20px;
+  gap: 9px;
+  padding: 24px 16px;
   text-align: center;
+  overflow-y: auto;
 }
 
 .home h1 {
-  margin: 0 0 12px;
-  font-size: 27px;
-  line-height: 1.15;
+  margin: 0 0 14px;
+  font-family: var(--font-display);
+  font-size: 31px;
+  line-height: 1.12;
   font-weight: 800;
-  letter-spacing: -0.03em;
+  letter-spacing: -0.025em;
   background: linear-gradient(100deg, var(--accent), var(--accent-2));
   -webkit-background-clip: text;
   background-clip: text;
@@ -192,19 +212,33 @@ body {
   color: initial;
 }
 
+/* Decorative glyph on each home button. Purely ornamental — the label beside
+   it is the real text. */
+.bi {
+  flex: 0 0 auto;
+  font-size: 19px;
+  line-height: 1;
+  filter: saturate(1.05);
+}
+
 /* Makes "are you both on the same build?" answerable without DevTools. */
 .ver {
-  margin-top: 14px;
+  margin-top: 16px;
   font-size: 10px;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .home .fine {
-  margin-top: 12px;
-  font-size: 13px;
+  margin-top: 14px;
+  padding: 11px 13px;
+  font-size: 12px;
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--warn-line) 55%, var(--line));
+  border-radius: var(--r-md);
+  color: color-mix(in srgb, var(--fg) 72%, var(--muted));
 }
 
 /* --- controls ------------------------------------------------------------ */
@@ -217,15 +251,20 @@ button {
   color: var(--fg);
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 7px 9px;
+  border-radius: var(--r-pill);
+  padding: 8px 13px;
   transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease,
     transform 0.08s ease;
 }
 
+select {
+  padding-right: 8px;
+}
+
 input[type="text"],
 input[type="search"] {
-  box-shadow: var(--shadow-sm) inset;
+  background: var(--bg-2);
+  box-shadow: none;
 }
 
 input::placeholder {
@@ -234,7 +273,7 @@ input::placeholder {
 
 select:hover,
 input:hover {
-  border-color: color-mix(in srgb, var(--accent) 40%, var(--line));
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
 }
 
 :focus-visible {
@@ -246,7 +285,7 @@ input:hover {
 button {
   cursor: pointer;
   white-space: nowrap;
-  font-weight: 600;
+  font-weight: 700;
   box-shadow: var(--shadow-sm);
 }
 
@@ -278,10 +317,26 @@ button.primary:hover:not(:disabled) {
   border-color: transparent;
 }
 
+/* The home menu: chunky rounded slabs, glyph then label, centred as a pair. */
 button.big {
-  padding: 18px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 11px;
+  padding: 17px 16px;
+  font-family: var(--font-display);
   font-size: 16.5px;
+  letter-spacing: -0.01em;
   border-radius: var(--r-lg);
+}
+
+button.big:not(.primary) {
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+button.big.primary {
+  box-shadow: var(--shadow-lg);
 }
 
 /* Informational, not a problem — deliberately quiet so an incomplete capture
@@ -290,10 +345,10 @@ button.big {
   font-size: 11px;
   line-height: 1.5;
   color: var(--muted);
-  padding: 7px 9px;
+  padding: 9px 12px;
   border-radius: var(--r-md);
-  background: var(--line-soft);
-  border: 1px solid var(--line);
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--warn-line) 50%, var(--line));
 }
 
 .note[hidden] {
@@ -303,9 +358,9 @@ button.big {
 /* --- stories --- */
 
 .story {
-  margin: 10px;
+  margin: 10px 10px 0;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--r-lg);
   background: var(--surface);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
@@ -314,8 +369,9 @@ button.big {
 .story-head {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 8px;
-  padding: 7px 9px;
+  padding: 9px 12px;
   font-size: 10.5px;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
@@ -330,29 +386,24 @@ button.big {
   background: #000;
 }
 
-/* The home list grows with each feature; let it scroll rather than clip. */
-.home {
-  overflow-y: auto;
-}
-
 /* --- my account scan rows --- */
 
 .scanrow {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 9px;
+  gap: 9px;
+  padding: 8px 8px 8px 13px;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  border-radius: var(--r-pill);
+  background: var(--bg-2);
+  box-shadow: none;
 }
 
 .scanlabel {
   flex: 0 0 auto;
   font-weight: 700;
   font-size: 12px;
-  min-width: 62px;
+  min-width: 58px;
 }
 
 .scanstate {
@@ -371,13 +422,13 @@ button.big {
 
 button.small {
   flex: 0 0 auto;
-  padding: 5px 11px;
+  padding: 6px 14px;
   font-size: 12px;
 }
 
 /* Breathing room between the account picker and the action below it. */
 .check-row {
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 .counts {
@@ -390,27 +441,28 @@ button.small {
   display: none;
 }
 
-/* Each figure sits in its own bubble, number stacked over its label. */
+/* Each figure sits in its own cream bubble, number stacked over its label. */
 .counts span {
   flex: 1 1 0;
   min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 1px;
-  padding: 9px 10px;
+  gap: 2px;
+  padding: 10px 10px;
   border-radius: var(--r-md);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-  font-size: 11px;
+  border: 1px solid color-mix(in srgb, var(--warn-line) 45%, var(--line));
+  background: var(--surface-2);
+  box-shadow: none;
+  font-size: 10.5px;
   letter-spacing: 0.01em;
   color: var(--muted);
 }
 
 .counts b {
-  color: var(--fg);
-  font-size: 18px;
+  color: var(--accent);
+  font-family: var(--font-display);
+  font-size: 19px;
   line-height: 1.1;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -418,25 +470,38 @@ button.small {
 
 /* Slightly beefier than a normal button without going full .big. */
 button.big-action {
-  padding: 11px 14px;
-  font-size: 15px;
+  padding: 13px 14px;
+  font-family: var(--font-display);
+  font-size: 15.5px;
   border-radius: var(--r-md);
 }
 
-button.big:not(.primary) {
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
-}
-
 button.back {
-  padding: 5px 10px;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 15px;
   line-height: 1;
-  border-radius: 99px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  border-color: transparent;
+  color: var(--accent);
+  box-shadow: none;
 }
 
+/* Width is auto, not fixed: this button swaps its glyph for "Sure?" when armed
+   and must be able to grow. */
 button.icon {
-  padding: 7px 10px;
+  padding: 0 10px;
+  min-width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r-pill);
 }
 
 button.armed,
@@ -459,6 +524,10 @@ button.armed:hover {
   min-height: 0;
 }
 
+.status:empty {
+  display: none;
+}
+
 .fine {
   margin: 0;
   font-size: 11.5px;
@@ -470,7 +539,7 @@ button.armed:hover {
 .done {
   font-size: 11.5px;
   line-height: 1.5;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border-radius: var(--r-md);
 }
 
@@ -481,32 +550,32 @@ button.armed:hover {
 }
 
 .alert.bad {
-  background: color-mix(in srgb, var(--bad) 12%, var(--bg));
-  border-color: var(--bad);
+  background: color-mix(in srgb, var(--bad) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
   color: var(--bad);
 }
 
 .done {
-  border: 1px solid color-mix(in srgb, var(--ok) 45%, var(--line));
-  background: color-mix(in srgb, var(--ok) 9%, var(--surface));
+  border: 1px solid color-mix(in srgb, var(--ok) 35%, var(--line));
+  background: color-mix(in srgb, var(--ok) 8%, var(--surface));
 }
 
 .done.bad {
-  border-color: var(--bad);
-  background: color-mix(in srgb, var(--bad) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+  background: color-mix(in srgb, var(--bad) 9%, var(--surface));
 }
 
 .progress {
-  height: 4px;
+  height: 7px;
   background: var(--line-soft);
-  border-radius: 99px;
+  border-radius: var(--r-pill);
   overflow: hidden;
 }
 
 .progress > div {
   height: 100%;
   width: 0;
-  border-radius: 99px;
+  border-radius: var(--r-pill);
   background: linear-gradient(90deg, var(--accent), var(--accent-2));
   transition: width 0.3s ease;
 }
@@ -527,12 +596,17 @@ button.armed:hover {
 
 /* --- lists --------------------------------------------------------------- */
 
+/* The results list is its own card, matching the control cards above it. */
 .viewport {
   flex: 1 1 auto;
+  margin: 10px;
   overflow-y: auto;
   overflow-x: hidden;
   position: relative;
   outline: none;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
 
 .spacer {
@@ -552,8 +626,8 @@ button.armed:hover {
   height: var(--row-h);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 0 11px;
+  gap: 9px;
+  padding: 0 12px;
   border-bottom: 1px solid var(--line-soft);
   transition: background 0.12s ease;
 }
@@ -564,27 +638,35 @@ button.armed:hover {
 
 .rank {
   flex: 0 0 auto;
-  min-width: 34px;
+  min-width: 32px;
   text-align: right;
   color: var(--muted);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
+/* Dates read as little chips rather than loose text in a gutter. */
 .rank.when,
 .rank.base {
-  min-width: 76px;
-  text-align: left;
+  min-width: 78px;
+  padding: 4px 8px;
+  text-align: center;
+  border-radius: var(--r-pill);
   font-variant-numeric: normal;
+  font-size: 10px;
+  line-height: 1.3;
 }
 
 .rank.when {
   color: var(--accent);
+  background: var(--accent-soft);
   font-weight: 700;
 }
 
 .rank.base {
-  opacity: 0.5;
+  color: var(--muted);
+  background: var(--line-soft);
+  opacity: 0.85;
   font-style: italic;
 }
 
@@ -598,7 +680,7 @@ button.armed:hover {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-weight: 650;
+  font-weight: 700;
   color: var(--fg);
   text-decoration: none;
 }
@@ -626,11 +708,11 @@ button.armed:hover {
 .tag {
   font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.02em;
+  letter-spacing: 0.03em;
   text-transform: uppercase;
   line-height: 1;
-  padding: 4px 5px;
-  border-radius: 5px;
+  padding: 4px 7px;
+  border-radius: var(--r-pill);
   background: var(--line-soft);
   color: var(--muted);
   border: 1px solid var(--line);
@@ -638,13 +720,13 @@ button.armed:hover {
 
 .tag.v {
   color: #1d7ee8;
-  border-color: color-mix(in srgb, #1d7ee8 45%, transparent);
+  border-color: color-mix(in srgb, #1d7ee8 40%, transparent);
   background: color-mix(in srgb, #1d7ee8 10%, transparent);
 }
 
 .tag.gone {
   color: var(--bad);
-  border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
   background: color-mix(in srgb, var(--bad) 10%, transparent);
 }
 
@@ -657,7 +739,7 @@ button.armed:hover {
 /* --- grouped arrivals ---------------------------------------------------- */
 
 .grouplist {
-  padding-bottom: 16px;
+  padding-bottom: 14px;
 }
 
 .ghead {
@@ -665,17 +747,18 @@ button.armed:hover {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 12px 11px 3px;
+  padding: 13px 12px 5px;
   position: sticky;
   top: 0;
   z-index: 2;
-  background: linear-gradient(var(--bg) 72%, transparent);
+  background: linear-gradient(var(--surface) 74%, transparent);
   backdrop-filter: blur(6px);
 }
 
 .gtime {
+  font-family: var(--font-display);
   font-weight: 800;
-  font-size: 12.5px;
+  font-size: 13px;
   letter-spacing: -0.01em;
 }
 
@@ -687,33 +770,50 @@ button.armed:hover {
   letter-spacing: 0.04em;
   color: #fff;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  padding: 4px 8px;
-  border-radius: 99px;
+  padding: 5px 10px;
+  border-radius: var(--r-pill);
   box-shadow: var(--shadow-sm);
 }
 
 /* Only rendered when a group actually contains unverified arrivals. */
 .gnote {
-  padding: 0 11px 8px;
+  margin: 0 12px 8px;
+  padding: 8px 11px;
   font-size: 10.5px;
   line-height: 1.45;
   color: var(--warn);
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: var(--r-md);
 }
 
+/* Rounded spine down the left of each check's arrivals. */
 .gbody {
-  border-left: 3px solid transparent;
-  border-image: linear-gradient(var(--accent), var(--accent-2)) 1;
-  margin-left: 11px;
-  border-radius: 0;
+  position: relative;
+  margin-left: 10px;
+  padding-left: 7px;
+}
+
+.gbody::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(var(--accent), var(--accent-2));
 }
 
 .gfoot {
-  margin: 14px 11px 0;
-  padding-top: 12px;
+  margin: 16px 12px 0;
+  padding: 12px 13px;
   font-size: 11px;
   line-height: 1.5;
   color: var(--muted);
-  border-top: 1px dashed var(--line);
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--warn-line) 45%, var(--line));
+  border-radius: var(--r-md);
 }
 
 /* The "no order within a group" caveat, moved out of every group header and
@@ -729,10 +829,14 @@ button.armed:hover {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 8px;
+  gap: 9px;
+  margin: 10px;
   padding: 26px 22px;
   color: var(--muted);
   text-align: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
 }
 
 .empty p {
@@ -742,15 +846,16 @@ button.armed:hover {
 .orphans {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 7px;
+  margin-top: 6px;
 }
 
 button.orphan {
   width: 100%;
-  padding: 11px 12px;
+  padding: 12px 14px;
   font-size: 12.5px;
   border-radius: var(--r-md);
+  white-space: normal;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   border-color: transparent;
   color: #fff;
@@ -758,8 +863,9 @@ button.orphan {
 }
 
 .empty strong {
+  font-family: var(--font-display);
   color: var(--fg);
-  font-size: 14px;
+  font-size: 15px;
 }
 
 /* Respect a stated preference for less movement. */

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.0.0
+// @version      2.1.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -578,6 +578,52 @@
   root.innerHTML = `
     <style>
       :host { all: initial; }
+
+      /* Same token set as the desktop side panel, so the two look like one
+         product. Declared after the reset above: an "all: initial" would wipe
+         custom properties declared before it.
+         (No backticks in here — this whole block is a JS template literal.) */
+      :host {
+        --bg: #fde9f2;
+        --bg2: #fff4f9;
+        --surface: #ffffff;
+        --surface2: #fff6e4;   /* cream — second surface, for quiet blocks */
+        --fg: #4a2436;
+        --muted: #a5798e;
+        --line: #f7cfe1;
+        --line-soft: #fde8f1;
+        --accent: #e2478d;
+        --accent2: #b167da;
+        --accent-soft: #ffe6f1;
+        --warn: #9a5b00;
+        --warn-bg: #fff4e0;
+        --warn-line: #f4d7a4;
+        --r: 16px;
+        --r-lg: 22px;
+        --pill: 999px;
+        /* Rounded display face where the platform has one (SF Rounded covers
+           every iPhone); Android falls through to its own UI face. */
+        --display: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
+      }
+      @media (prefers-color-scheme: dark) {
+        :host {
+          --bg: #17121b;
+          --bg2: #1e1724;
+          --surface: #241c2b;
+          --surface2: #2c2130;
+          --fg: #f6eaf2;
+          --muted: #ac96a6;
+          --line: #3b2e41;
+          --line-soft: #2c2333;
+          --accent: #ff7fb8;
+          --accent2: #c08bf5;
+          --accent-soft: #3a2337;
+          --warn: #f0c887;
+          --warn-bg: #33260f;
+          --warn-line: #55421d;
+        }
+      }
+
       * { box-sizing: border-box; font-family: -apple-system, system-ui, sans-serif; }
 
       .fab {
@@ -588,10 +634,11 @@
            remembers where it was put. */
         bottom: calc(104px + env(safe-area-inset-bottom, 0px));
         z-index: 2147483000;
-        width: 56px; height: 56px; border-radius: 50%; border: none;
-        background: linear-gradient(135deg, #e0357f, #a34ae0);
-        color: #fff; font-size: 23px;
-        box-shadow: 0 6px 20px rgba(0,0,0,.3); cursor: pointer;
+        width: 58px; height: 58px; border-radius: 50%;
+        border: 3px solid rgba(255,255,255,.75);
+        background: linear-gradient(135deg, #ff8ec2, #e2478d 55%, #b167da);
+        color: #fff; font-size: 24px;
+        box-shadow: 0 8px 22px rgba(190, 60, 130, .45); cursor: pointer;
         touch-action: none; /* a drag must not scroll the page underneath */
       }
       .fab:active { transform: scale(.94); }
@@ -600,18 +647,12 @@
       .sheet {
         position: fixed; inset: 0; z-index: 2147483001;
         display: flex; flex-direction: column;
-        background: #fff8fb; color: #2b1b25;
+        background: var(--bg); color: var(--fg);
+        background-image: radial-gradient(130% 34% at 50% 0%, var(--bg2) 0%, transparent 70%);
         padding-top: env(safe-area-inset-top, 0px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
       }
       .sheet[hidden] { display: none; }
-      @media (prefers-color-scheme: dark) {
-        .sheet { background: #15111a; color: #f3eaf1; }
-        .card, .tab, select, input { border-color: #322838 !important; }
-        .sub, .n, .ghead-note { color: #a1919e !important; }
-        .note { background: #1f1926 !important; border-color: #322838 !important; color: #a1919e !important; }
-        select, input { background: #1f1926 !important; color: #f3eaf1 !important; }
-      }
 
       header {
         padding: 18px 58px 14px 16px;
@@ -622,10 +663,15 @@
            underneath them. */
         min-height: 66px;
       }
-      h1 { margin: 0 0 3px; font-size: 19px; font-weight: 800; letter-spacing: -.02em; }
+      h1 {
+        margin: 0 0 4px; font-family: var(--display);
+        font-size: 22px; font-weight: 800; letter-spacing: -.025em;
+        background: linear-gradient(100deg, var(--accent), var(--accent2));
+        -webkit-background-clip: text; background-clip: text; color: transparent;
+      }
       /* Holds a line even when empty, so the header is the same height on
          every view and the content below does not jump around. */
-      .sub { font-size: 12px; line-height: 15px; min-height: 15px; color: #8d7683; }
+      .sub { font-size: 12px; line-height: 15px; min-height: 15px; color: var(--muted); }
       .x, .bk {
         position: absolute; top: 14px;
         /* Both sit BEFORE <header> in the DOM, and header is position:relative.
@@ -633,101 +679,147 @@
            but swallow every tap. */
         z-index: 3;
         width: 38px; height: 38px; border-radius: 50%; border: none;
-        background: rgba(128,128,128,.18); color: inherit; font-size: 18px; cursor: pointer;
+        background: var(--accent-soft); color: var(--accent);
+        font-size: 18px; font-weight: 700; cursor: pointer;
       }
       .x { right: 12px; }
       .bk { left: 12px; }
       header.hasback { padding-left: 58px; }
 
-      .pad { padding: 0 16px 12px; }
+      .pad { padding: 0 14px 12px; }
       .rowf { display: flex; gap: 8px; }
       button.act {
-        flex: 1; padding: 13px; font-size: 15px; font-weight: 700;
-        border-radius: 12px; border: none; cursor: pointer;
-        background: linear-gradient(135deg, #e0357f, #a34ae0); color: #fff;
+        flex: 1; padding: 14px; font-family: var(--display);
+        font-size: 15px; font-weight: 700;
+        border-radius: var(--pill); border: none; cursor: pointer;
+        background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
+        box-shadow: 0 4px 12px rgba(190, 60, 130, .22);
       }
-      button.act.ghost { background: transparent; color: #e0357f; border: 1px solid #e0357f; font-weight: 600; }
+      button.act.ghost {
+        background: var(--surface); color: var(--accent);
+        border: 1px solid var(--line); font-weight: 700; box-shadow: none;
+      }
       button.act:disabled { opacity: .5; }
+
+      /* Home menu: a glyph, then the label stack. The glyph is decoration. */
       button.big {
-        width: 100%; padding: 18px; margin-bottom: 12px;
-        font-size: 16px; font-weight: 700; text-align: left;
-        border-radius: 14px; border: 1px solid #f4dde9; cursor: pointer;
-        background: rgba(127,127,127,.06); color: inherit;
+        display: flex; align-items: center; gap: 13px;
+        width: 100%; padding: 16px 18px; margin-bottom: 11px;
+        text-align: left;
+        border-radius: var(--r-lg); border: 1px solid var(--line); cursor: pointer;
+        background: var(--surface); color: inherit;
+        box-shadow: 0 1px 2px rgba(150, 60, 105, .07);
       }
       button.big:last-child { margin-bottom: 0; }
-      button.big b { display: block; font-size: 16px; }
-      button.big span { display: block; font-size: 12px; font-weight: 500; opacity: .7; margin-top: 3px; }
-      button.big.p { background: linear-gradient(135deg, #e0357f, #a34ae0); color: #fff; border: none; }
-      button.big.p span { opacity: .85; }
+      button.big .bi { flex: 0 0 auto; font-size: 23px; font-style: normal; line-height: 1; }
+      button.big .lab { flex: 1 1 auto; min-width: 0; }
+      button.big b { display: block; font-family: var(--display); font-size: 16.5px; font-weight: 800; letter-spacing: -.01em; }
+      button.big em { display: block; font-style: normal; font-size: 12px; font-weight: 500; opacity: .7; margin-top: 3px; }
+      button.big.p {
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        color: #fff; border: none;
+        box-shadow: 0 8px 20px rgba(190, 60, 130, .3);
+      }
+      button.big.p em { opacity: .88; }
 
       input, select {
-        width: 100%; padding: 13px; font-size: 16px;
-        border-radius: 12px; border: 1px solid #f4dde9; background: #fff; color: inherit;
+        width: 100%; padding: 13px 15px; font-size: 16px;
+        border-radius: var(--pill); border: 1px solid var(--line);
+        background: var(--surface); color: inherit;
       }
+      input::placeholder { color: var(--muted); }
 
       .note {
-        margin: 0 16px 10px; padding: 9px 11px; font-size: 11.5px; line-height: 1.5;
-        border-radius: 10px; background: #fdeaf3; border: 1px solid #f4dde9; color: #8d7683;
+        margin: 0 14px 10px; padding: 10px 13px; font-size: 11.5px; line-height: 1.5;
+        border-radius: var(--r); background: var(--surface2);
+        border: 1px solid var(--warn-line); color: var(--muted);
       }
       .note[hidden] { display: none; }
 
-      .tabs { display: flex; gap: 6px; padding: 0 16px 10px; }
+      .tabs { display: flex; gap: 6px; padding: 0 14px 10px; }
       .tab {
-        flex: 1; padding: 9px 6px; font-size: 12px; font-weight: 700;
-        border-radius: 9px; border: 1px solid #f4dde9; background: transparent; color: inherit; cursor: pointer;
+        flex: 1; padding: 10px 6px; font-size: 12px; font-weight: 700;
+        border-radius: var(--pill); border: 1px solid var(--line);
+        background: var(--surface); color: inherit; cursor: pointer;
       }
-      .tab[aria-selected="true"] { background: #e0357f; border-color: #e0357f; color: #fff; }
+      .tab[aria-selected="true"] {
+        background: linear-gradient(135deg, var(--accent), var(--accent2));
+        border-color: transparent; color: #fff;
+      }
 
-      .list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 12px 28px; }
+      .list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 14px 28px; }
       .card {
-        display: flex; align-items: center; gap: 10px; padding: 12px;
-        margin-bottom: 8px; border: 1px solid #f4dde9; border-radius: 12px;
-        background: rgba(127,127,127,.05);
+        display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+        margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--r);
+        background: var(--surface);
       }
       .who { flex: 1; min-width: 0; }
       .u { display: block; font-weight: 700; font-size: 15px; color: inherit; text-decoration: none;
            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .n { display: block; font-size: 12px; color: #8d7683;
+      .n { display: block; font-size: 12px; color: var(--muted);
            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-      .go { flex: 0 0 auto; font-size: 12px; font-weight: 700; color: #e0357f; text-decoration: none; }
+      .go {
+        flex: 0 0 auto; font-size: 11.5px; font-weight: 700; text-decoration: none;
+        color: var(--accent); background: var(--accent-soft);
+        padding: 6px 12px; border-radius: var(--pill);
+      }
       .flag { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
-              padding: 3px 5px; border-radius: 5px; border: 1px solid #f3d9ab; color: #9a5b00; background: #fff5e6; }
+              padding: 4px 7px; border-radius: var(--pill);
+              border: 1px solid var(--warn-line); color: var(--warn); background: var(--warn-bg); }
 
       .ghead { display: flex; justify-content: space-between; align-items: center;
-               gap: 8px; padding: 16px 4px 4px; }
-      .gtime { font-weight: 800; font-size: 13px; }
+               gap: 8px; padding: 16px 4px 6px; }
+      .gtime { font-family: var(--display); font-weight: 800; font-size: 13.5px; letter-spacing: -.01em; }
       .gcount { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
-                color: #fff; background: linear-gradient(135deg,#e0357f,#a34ae0);
-                padding: 4px 8px; border-radius: 99px; }
-      .ghead-note { padding: 0 4px 8px; font-size: 10.5px; color: #9a5b00; }
-      .gfoot { margin: 18px 4px 0; padding-top: 12px; font-size: 11px; line-height: 1.55;
-               color: #8d7683; border-top: 1px dashed #f4dde9; }
-
-      .empty { padding: 40px 20px; text-align: center; color: #8d7683; font-size: 14px; line-height: 1.6; }
-
-      .stat { display: flex; gap: 8px; padding: 0 16px 12px; }
-      .stat div {
-        flex: 1; text-align: center; padding: 10px 6px;
-        border: 1px solid #f4dde9; border-radius: 12px; background: rgba(127,127,127,.05);
-        font-size: 11px; color: #8d7683;
+                color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent2));
+                padding: 5px 10px; border-radius: var(--pill); }
+      .ghead-note {
+        margin: 0 0 8px; padding: 8px 12px; font-size: 10.5px; line-height: 1.45;
+        color: var(--warn); background: var(--warn-bg);
+        border: 1px solid var(--warn-line); border-radius: var(--r);
       }
-      .stat b { display: block; font-size: 18px; font-weight: 800; color: inherit; }
+      .gfoot {
+        margin: 18px 0 0; padding: 12px 14px; font-size: 11px; line-height: 1.55;
+        color: var(--muted); background: var(--surface2);
+        border: 1px solid var(--warn-line); border-radius: var(--r);
+      }
 
-      .story { margin-bottom: 10px; border: 1px solid #f4dde9; border-radius: 12px; overflow: hidden; }
+      .empty {
+        margin: 4px 0; padding: 34px 22px; text-align: center;
+        color: var(--muted); font-size: 13.5px; line-height: 1.6;
+        background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+      }
+
+      .stat { display: flex; gap: 8px; padding: 0 14px 12px; }
+      .stat div {
+        flex: 1; text-align: center; padding: 11px 6px;
+        border: 1px solid var(--warn-line); border-radius: var(--r);
+        background: var(--surface2);
+        font-size: 10.5px; color: var(--muted);
+      }
+      .stat b {
+        display: block; font-family: var(--display);
+        font-size: 19px; font-weight: 800; color: var(--accent);
+      }
+
+      .story {
+        margin-bottom: 10px; border: 1px solid var(--line); border-radius: var(--r-lg);
+        background: var(--surface); overflow: hidden;
+      }
       .story-head {
-        display: flex; justify-content: space-between; gap: 8px;
-        padding: 8px 10px; font-size: 11px; color: #8d7683;
+        display: flex; justify-content: space-between; align-items: center; gap: 8px;
+        padding: 9px 13px; font-size: 11px; color: var(--muted);
       }
       .story-media {
         display: block; width: 100%; height: auto;
         max-height: 68vh; object-fit: contain; background: #000;
       }
-      .story-acts { padding: 8px 10px; }
+      .story-acts { padding: 9px 11px 11px; }
       .story-acts button {
-        width: 100%; padding: 11px 6px;
-        font-size: 13px; font-weight: 700; font-family: inherit;
-        border-radius: 10px; border: none; cursor: pointer;
-        background: linear-gradient(135deg,#e0357f,#a34ae0); color: #fff;
+        width: 100%; padding: 12px 6px;
+        font-family: var(--display); font-size: 13.5px; font-weight: 700;
+        border-radius: var(--pill); border: none; cursor: pointer;
+        background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
       }
       .story-acts button:active { filter: brightness(.92); }
     </style>
@@ -806,13 +898,13 @@
     const watching = Object.keys(data.tracks).length;
     ui.controls.innerHTML = `
       <div class="pad">
-        <button class="big p" data-go="self"><b>My account</b><span>Who doesn't follow you back</span></button>
-        <button class="big" data-go="stalk"><b>Start a new stalk</b><span>Record who they follow now, to monitor later</span></button>
-        <button class="big" data-go="monitor"><b>Monitor a user</b><span>${
+        <button class="big p" data-go="self"><i class="bi">💗</i><span class="lab"><b>My account</b><em>Who doesn't follow you back</em></span></button>
+        <button class="big" data-go="stalk"><i class="bi">🌸</i><span class="lab"><b>Start a new stalk</b><em>Record who they follow now, to monitor later</em></span></button>
+        <button class="big" data-go="monitor"><i class="bi">🔔</i><span class="lab"><b>Monitor a user</b><em>${
           watching ? `See who they've added · ${watching} watched` : 'Nothing watched yet'
-        }</span></button>
-        <button class="big" data-go="compare"><b>Compare two accounts</b><span>Who they both follow</span></button>
-        <button class="big" data-go="stories"><b>Watch stories quietly</b><span>No seen receipt sent</span></button>
+        }</em></span></button>
+        <button class="big" data-go="compare"><i class="bi">🎀</i><span class="lab"><b>Compare two accounts</b><em>Who they both follow</em></span></button>
+        <button class="big" data-go="stories"><i class="bi">🍿</i><span class="lab"><b>Watch stories quietly</b><em>No seen receipt sent</em></span></button>
       </div>`;
     ui.list.innerHTML = `<div class="empty">Instagram never says when a follow happened, so a first
       capture has no order. Only what shows up <i>after</i> it can be dated.</div>`;
