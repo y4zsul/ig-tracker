@@ -1,34 +1,51 @@
 /* ==========================================================================
    InstaLurk — side panel
 
-   Soft-pastel theme: a tinted page ground with white and cream cards floating
-   on it, generous corner radii, pill-shaped controls. Light and dark are the
-   same token set so every component is written once.
+   Glassmorphism: a dark plum ground lit by soft colour fields, with every
+   surface a frosted translucent card over the top.
+
+   Two things make it work, and both are load-bearing:
+     1. `backdrop-filter` blurs what is BEHIND an element. Over a flat
+        background it produces grey mud, so the ground carries colour fields
+        for the glass to pick up.
+     2. Those fields are radial-gradients, not blurred divs. Same look, none
+        of the per-frame cost of `filter: blur()` on a large layer.
+
+   This build is dark-only on purpose — frosted glass needs a dark, saturated
+   ground to read. `color-scheme: dark` makes the native select dropdown and
+   scrollbars follow suit.
    ========================================================================== */
 
 :root {
-  --bg: #fde9f2;
-  --bg-2: #fff4f9;
-  --surface: #ffffff;
-  --surface-2: #fff6e4; /* cream — the second surface, for quiet blocks */
-  --fg: #4a2436;
-  --muted: #a5798e;
-  --line: #f7cfe1;
-  --line-soft: #fde8f1;
+  color-scheme: dark;
 
-  --accent: #e2478d;
-  --accent-2: #b167da;
-  --accent-soft: #ffe6f1;
+  --bg: #241528;
+  --bg-2: rgba(0, 0, 0, 0.24); /* recessed: inputs, progress track */
+  --surface: rgba(255, 255, 255, 0.1); /* the glass */
+  --surface-2: rgba(255, 255, 255, 0.055); /* quieter glass, nested blocks */
+  --fg: #ffffff;
+  --muted: rgba(255, 255, 255, 0.66);
+  --line: rgba(255, 255, 255, 0.3); /* the rim */
+  --line-soft: rgba(255, 255, 255, 0.12);
 
-  --ok: #14805c;
-  --warn: #9a5b00;
-  --warn-bg: #fff4e0;
-  --warn-line: #f4d7a4;
-  --bad: #d8365b;
+  --accent: #ff7ab8;
+  --accent-2: #c58cf5;
+  --accent-soft: rgba(255, 255, 255, 0.16);
 
-  --shadow-sm: 0 1px 2px rgba(150, 60, 105, 0.07);
-  --shadow-md: 0 4px 12px rgba(150, 60, 105, 0.12);
-  --shadow-lg: 0 10px 26px rgba(150, 60, 105, 0.18);
+  --ok: #5ee0ad;
+  --warn: #ffd79a;
+  --warn-bg: rgba(255, 190, 90, 0.14);
+  --warn-line: rgba(255, 200, 120, 0.38);
+  --bad: #ff8098;
+
+  --shadow-sm: 0 1px 2px rgba(30, 6, 22, 0.25);
+  --shadow-md: 0 6px 18px rgba(30, 6, 22, 0.35);
+  --shadow-lg: 0 10px 28px rgba(255, 90, 170, 0.4);
+
+  /* Lift for controls. Deeper than --shadow-sm because a faint shadow is
+     invisible against a dark ground — it needs opacity to read at all. */
+  --shadow-btn: 0 3px 9px rgba(14, 3, 12, 0.45);
+  --shadow-btn-lg: 0 6px 16px rgba(14, 3, 12, 0.48);
 
   --r-sm: 12px;
   --r-md: 16px;
@@ -36,41 +53,24 @@
   --r-pill: 999px;
   --row-h: 56px;
 
+  --blur: blur(22px) saturate(150%);
+
   /* Rounded display face where the platform has one (SF Rounded on macOS);
      Trebuchet is the friendliest thing reliably present on Windows. */
   --font-display: ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display",
     "Trebuchet MS", system-ui, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #17121b;
-    --bg-2: #1e1724;
-    --surface: #241c2b;
-    --surface-2: #2c2130;
-    --fg: #f6eaf2;
-    --muted: #ac96a6;
-    --line: #3b2e41;
-    --line-soft: #2c2333;
-
-    --accent: #ff7fb8;
-    --accent-2: #c08bf5;
-    --accent-soft: #3a2337;
-
-    --ok: #4ecc9d;
-    --warn: #f0c887;
-    --warn-bg: #33260f;
-    --warn-line: #55421d;
-    --bad: #ff7d97;
-
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.45);
-    --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.55);
-  }
-}
-
 * {
   box-sizing: border-box;
+}
+
+/* The UA rule for [hidden] is a bare attribute selector, so any class rule
+   setting `display` outranks it — `.bar { display: flex }` was keeping the
+   hidden activity strip on screen. Harmless when a bar was a borderless
+   strip; an empty glass card is very visible. */
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -82,26 +82,35 @@ body {
 body {
   display: flex;
   flex-direction: column;
-  background: var(--bg);
-  background-image: radial-gradient(
-    130% 60% at 50% 0%,
-    var(--bg-2) 0%,
-    transparent 70%
-  );
+  /* The home card sizes to its content rather than stretching, so on a short
+     panel the page itself is what scrolls. */
+  overflow-y: auto;
   color: var(--fg);
   font: 13px/1.45 system-ui, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+
+  /* The colour fields the glass feeds on. Fixed so they stay put while the
+     list scrolls over them. */
+  background-color: var(--bg);
+  background-image: radial-gradient(
+      58% 38% at 6% 2%,
+      rgba(255, 95, 168, 0.85) 0%,
+      transparent 60%
+    ),
+    radial-gradient(52% 34% at 98% 20%, rgba(168, 85, 247, 0.68) 0%, transparent 62%),
+    radial-gradient(58% 40% at 22% 99%, rgba(255, 143, 196, 0.5) 0%, transparent 60%);
+  background-attachment: fixed;
 }
 
 ::selection {
   background: var(--accent);
-  color: #fff;
+  color: #3a0d27;
 }
 
 /* Slim scrollbars — the panel is narrow and the default ones eat real width. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: var(--line) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.28) transparent;
 }
 
 ::-webkit-scrollbar {
@@ -110,7 +119,7 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--line);
+  background: rgba(255, 255, 255, 0.28);
   border-radius: var(--r-pill);
   border: 2px solid transparent;
   background-clip: content-box;
@@ -136,8 +145,7 @@ body {
   display: none;
 }
 
-/* Every control block is a card floating on the tinted ground rather than a
-   full-bleed strip with a rule under it. */
+/* Every control block is a pane of frosted glass over the colour fields. */
 .bar {
   flex: 0 0 auto;
   margin: 10px 10px 0;
@@ -146,9 +154,11 @@ body {
   flex-direction: column;
   gap: 9px;
   background: var(--surface);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
 }
 
 .activity {
@@ -179,46 +189,48 @@ body {
 
 /* --- home ---------------------------------------------------------------- */
 
+/* Hugs its content instead of filling the panel: as a glass card, stretching
+   leaves a large dead pane under the last button.
+
+   `margin: auto` on the block axis centres it in the leftover space. When the
+   card is taller than the panel the free space goes negative, flexbox treats
+   both auto margins as zero, and it falls back to scrolling from the top
+   rather than clipping its own head. */
 .home {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  justify-content: center;
   gap: 9px;
-  padding: 24px 16px;
+  margin: auto 10px;
+  padding: 22px 16px;
   text-align: center;
-  overflow-y: auto;
+
+  background: var(--surface);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
 }
 
 .home h1 {
-  margin: 0 0 14px;
+  margin: 0 0 16px;
   font-family: var(--font-display);
   font-size: 31px;
   line-height: 1.12;
   font-weight: 800;
   letter-spacing: -0.025em;
-  background: linear-gradient(100deg, var(--accent), var(--accent-2));
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #fff;
+  text-shadow: 0 2px 14px rgba(255, 90, 170, 0.55);
 }
 
-/* The heading paints its text with a clipped gradient, which would flatten an
-   emoji into a coloured silhouette. Opt this one glyph back out. */
+/* Inert here — the heading paints plain white rather than clipped gradient —
+   but kept so the markup stays valid against either treatment. */
 .h1-emoji {
   -webkit-background-clip: initial;
   background-clip: initial;
   -webkit-text-fill-color: initial;
   color: initial;
-}
-
-/* Decorative glyph on each home button. Purely ornamental — the label beside
-   it is the real text. */
-.bi {
-  flex: 0 0 auto;
-  font-size: 19px;
-  line-height: 1;
-  filter: saturate(1.05);
 }
 
 /* Makes "are you both on the same build?" answerable without DevTools. */
@@ -228,7 +240,7 @@ body {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--muted);
-  opacity: 0.55;
+  opacity: 0.75;
 }
 
 .home .fine {
@@ -236,9 +248,9 @@ body {
   padding: 11px 13px;
   font-size: 12px;
   background: var(--surface-2);
-  border: 1px solid color-mix(in srgb, var(--warn-line) 55%, var(--line));
+  border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
-  color: color-mix(in srgb, var(--fg) 72%, var(--muted));
+  color: rgba(255, 255, 255, 0.82);
 }
 
 /* --- controls ------------------------------------------------------------ */
@@ -257,14 +269,16 @@ button {
     transform 0.08s ease;
 }
 
+/* Solid, not translucent: a native dropdown paints its own popup, and a
+   see-through control makes the closed state unreadable over a bright field. */
 select {
   padding-right: 8px;
+  background: #3a2440;
 }
 
 input[type="text"],
 input[type="search"] {
   background: var(--bg-2);
-  box-shadow: none;
 }
 
 input::placeholder {
@@ -273,24 +287,24 @@ input::placeholder {
 
 select:hover,
 input:hover {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  border-color: rgba(255, 255, 255, 0.5);
 }
 
 :focus-visible {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
+  box-shadow: 0 0 0 3px rgba(255, 122, 184, 0.35);
 }
 
 button {
   cursor: pointer;
   white-space: nowrap;
   font-weight: 700;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-btn);
 }
 
 button:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--line));
+  border-color: rgba(255, 255, 255, 0.55);
   background: var(--accent-soft);
 }
 
@@ -299,22 +313,24 @@ button:active:not(:disabled) {
 }
 
 button:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
   box-shadow: none;
 }
 
+/* Pink glow for the lift, plus the dark drop so it still sits on the surface
+   rather than floating in its own halo. */
 button.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border-color: transparent;
+  border-color: rgba(255, 255, 255, 0.5);
   color: #fff;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 6px 18px rgba(255, 90, 170, 0.38), var(--shadow-btn);
 }
 
 button.primary:hover:not(:disabled) {
-  filter: brightness(1.07);
+  filter: brightness(1.08);
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border-color: transparent;
+  border-color: rgba(255, 255, 255, 0.7);
 }
 
 /* The home menu: chunky rounded slabs, glyph then label, centred as a pair. */
@@ -323,7 +339,7 @@ button.big {
   align-items: center;
   justify-content: center;
   gap: 11px;
-  padding: 17px 16px;
+  padding: 13px 16px;
   font-family: var(--font-display);
   font-size: 16.5px;
   letter-spacing: -0.01em;
@@ -331,12 +347,14 @@ button.big {
 }
 
 button.big:not(.primary) {
-  background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  background: var(--surface-2);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-btn-lg);
 }
 
 button.big.primary {
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-lg), var(--shadow-btn-lg);
 }
 
 /* Informational, not a problem — deliberately quiet so an incomplete capture
@@ -344,11 +362,11 @@ button.big.primary {
 .note {
   font-size: 11px;
   line-height: 1.5;
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.72);
   padding: 9px 12px;
   border-radius: var(--r-md);
   background: var(--surface-2);
-  border: 1px solid color-mix(in srgb, var(--warn-line) 50%, var(--line));
+  border: 1px solid var(--line-soft);
 }
 
 .note[hidden] {
@@ -362,7 +380,9 @@ button.big.primary {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   background: var(--surface);
-  box-shadow: var(--shadow-sm);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
 }
 
@@ -393,10 +413,9 @@ button.big.primary {
   align-items: center;
   gap: 9px;
   padding: 8px 8px 8px 13px;
-  border: 1px solid var(--line);
+  border: 1px solid var(--line-soft);
   border-radius: var(--r-pill);
   background: var(--bg-2);
-  box-shadow: none;
 }
 
 .scanlabel {
@@ -441,7 +460,7 @@ button.small {
   display: none;
 }
 
-/* Each figure sits in its own cream bubble, number stacked over its label. */
+/* Each figure sits in its own pane, number stacked over its label. */
 .counts span {
   flex: 1 1 0;
   min-width: 0;
@@ -449,18 +468,17 @@ button.small {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-  padding: 10px 10px;
+  padding: 10px;
   border-radius: var(--r-md);
-  border: 1px solid color-mix(in srgb, var(--warn-line) 45%, var(--line));
+  border: 1px solid var(--line-soft);
   background: var(--surface-2);
-  box-shadow: none;
   font-size: 10.5px;
   letter-spacing: 0.01em;
   color: var(--muted);
 }
 
 .counts b {
-  color: var(--accent);
+  color: #fff;
   font-family: var(--font-display);
   font-size: 19px;
   line-height: 1.1;
@@ -486,10 +504,9 @@ button.back {
   font-size: 15px;
   line-height: 1;
   border-radius: var(--r-pill);
-  background: var(--accent-soft);
-  border-color: transparent;
-  color: var(--accent);
-  box-shadow: none;
+  background: rgba(255, 255, 255, 0.16);
+  border-color: var(--line);
+  color: #fff;
 }
 
 /* Width is auto, not fixed: this button swaps its glyph for "Sure?" when armed
@@ -508,7 +525,7 @@ button.armed,
 button.armed:hover {
   background: var(--bad);
   border-color: var(--bad);
-  color: #fff;
+  color: #3a0d18;
 }
 
 .danger {
@@ -550,24 +567,24 @@ button.armed:hover {
 }
 
 .alert.bad {
-  background: color-mix(in srgb, var(--bad) 12%, var(--surface));
-  border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
+  background: rgba(255, 128, 152, 0.15);
+  border-color: rgba(255, 128, 152, 0.45);
   color: var(--bad);
 }
 
 .done {
-  border: 1px solid color-mix(in srgb, var(--ok) 35%, var(--line));
-  background: color-mix(in srgb, var(--ok) 8%, var(--surface));
+  border: 1px solid rgba(94, 224, 173, 0.4);
+  background: rgba(94, 224, 173, 0.12);
 }
 
 .done.bad {
-  border-color: color-mix(in srgb, var(--bad) 45%, var(--line));
-  background: color-mix(in srgb, var(--bad) 9%, var(--surface));
+  border-color: rgba(255, 128, 152, 0.45);
+  background: rgba(255, 128, 152, 0.13);
 }
 
 .progress {
   height: 7px;
-  background: var(--line-soft);
+  background: var(--bg-2);
   border-radius: var(--r-pill);
   overflow: hidden;
 }
@@ -596,7 +613,9 @@ button.armed:hover {
 
 /* --- lists --------------------------------------------------------------- */
 
-/* The results list is its own card, matching the control cards above it. */
+/* The results list is its own pane. Slightly more opaque than the control
+   cards: this is the densest text in the app and it has to stay readable
+   wherever a bright field sits behind it. */
 .viewport {
   flex: 1 1 auto;
   margin: 10px;
@@ -604,9 +623,12 @@ button.armed:hover {
   overflow-x: hidden;
   position: relative;
   outline: none;
-  background: var(--surface);
+  background: rgba(36, 18, 42, 0.62);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
 }
 
 .spacer {
@@ -622,6 +644,8 @@ button.armed:hover {
   will-change: transform;
 }
 
+/* No backdrop-filter on rows — thousands of them scroll, and each filtered
+   layer is a repaint. The pane behind them is already frosted. */
 .item {
   height: var(--row-h);
   display: flex;
@@ -633,7 +657,7 @@ button.armed:hover {
 }
 
 .item:hover {
-  background: var(--accent-soft);
+  background: rgba(255, 255, 255, 0.09);
 }
 
 .rank {
@@ -658,15 +682,14 @@ button.armed:hover {
 }
 
 .rank.when {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: #ffd3e8;
+  background: rgba(255, 122, 184, 0.24);
   font-weight: 700;
 }
 
 .rank.base {
   color: var(--muted);
-  background: var(--line-soft);
-  opacity: 0.85;
+  background: rgba(255, 255, 255, 0.09);
   font-style: italic;
 }
 
@@ -681,7 +704,7 @@ button.armed:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 700;
-  color: var(--fg);
+  color: #fff;
   text-decoration: none;
 }
 
@@ -705,6 +728,8 @@ button.armed:hover {
   gap: 4px;
 }
 
+/* The bare .tag is "private". Every modifier below overrides all three of
+   colour, border-colour and background, so this styles that case alone. */
 .tag {
   font-size: 9px;
   font-weight: 700;
@@ -713,27 +738,24 @@ button.armed:hover {
   line-height: 1;
   padding: 4px 7px;
   border-radius: var(--r-pill);
-  background: var(--line-soft);
-  color: var(--muted);
-  border: 1px solid var(--line);
-}
-
-.tag.v {
-  color: #1d7ee8;
-  border-color: color-mix(in srgb, #1d7ee8 40%, transparent);
-  background: color-mix(in srgb, #1d7ee8 10%, transparent);
+  background: rgba(255, 255, 255, 0.2);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.55);
 }
 
 .tag.gone {
   color: var(--bad);
-  border-color: color-mix(in srgb, var(--bad) 40%, transparent);
-  background: color-mix(in srgb, var(--bad) 10%, transparent);
+  border-color: rgba(255, 128, 152, 0.42);
+  background: rgba(255, 128, 152, 0.13);
 }
 
+/* Neutral, not amber: "unverified" is a caveat about how the list was
+   collected, not a warning about the account, so it sits quieter than the
+   factual "private" tag rather than shouting over it. */
 .tag.warn {
-  color: var(--warn);
-  border-color: var(--warn-line);
-  background: var(--warn-bg);
+  color: rgba(255, 255, 255, 0.78);
+  border-color: var(--line-soft);
+  background: rgba(255, 255, 255, 0.1);
 }
 
 /* --- grouped arrivals ---------------------------------------------------- */
@@ -751,7 +773,8 @@ button.armed:hover {
   position: sticky;
   top: 0;
   z-index: 2;
-  background: linear-gradient(var(--surface) 74%, transparent);
+  background: linear-gradient(rgba(36, 18, 42, 0.92) 74%, transparent);
+  -webkit-backdrop-filter: blur(6px);
   backdrop-filter: blur(6px);
 }
 
@@ -772,19 +795,24 @@ button.armed:hover {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   padding: 5px 10px;
   border-radius: var(--r-pill);
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 3px 10px rgba(255, 90, 170, 0.35);
 }
 
-/* Only rendered when a group actually contains unverified arrivals. */
+/* Only rendered when a group actually contains unverified arrivals. Neutral
+   for the same reason as .tag.warn — it explains a caveat, it is not an error. */
 .gnote {
   margin: 0 12px 8px;
   padding: 8px 11px;
   font-size: 10.5px;
   line-height: 1.45;
-  color: var(--warn);
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-line);
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.24);
   border-radius: var(--r-md);
+}
+
+.gnote b {
+  color: #ffffff;
 }
 
 /* Rounded spine down the left of each check's arrivals. */
@@ -812,7 +840,7 @@ button.armed:hover {
   line-height: 1.5;
   color: var(--muted);
   background: var(--surface-2);
-  border: 1px solid color-mix(in srgb, var(--warn-line) 45%, var(--line));
+  border: 1px solid var(--line-soft);
   border-radius: var(--r-md);
 }
 
@@ -835,8 +863,11 @@ button.armed:hover {
   color: var(--muted);
   text-align: center;
   background: var(--surface);
+  -webkit-backdrop-filter: var(--blur);
+  backdrop-filter: var(--blur);
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
+  box-shadow: var(--shadow-md);
 }
 
 .empty p {
@@ -857,14 +888,14 @@ button.orphan {
   border-radius: var(--r-md);
   white-space: normal;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  border-color: transparent;
+  border-color: rgba(255, 255, 255, 0.5);
   color: #fff;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 6px 18px rgba(255, 90, 170, 0.35), var(--shadow-btn);
 }
 
 .empty strong {
   font-family: var(--font-display);
-  color: var(--fg);
+  color: #fff;
   font-size: 15px;
 }
 

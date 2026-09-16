@@ -492,7 +492,7 @@
       throw new Halt(
         `Instagram served an HTML page, not JSON (HTTP ${res.status}` +
           (title ? `, "${title.trim().replace(/\s+/g, ' ')}"` : '') +
-          '). The request never reached the API — this is not a rate limit.',
+          '). The request never reached the API. This is not a rate limit.',
         'html'
       );
     }
@@ -514,9 +514,9 @@
       );
     }
     if (res.status === 401)
-      throw new Halt('Not authorised (HTTP 401) — log in to Instagram and retry.', 'auth');
+      throw new Halt('Not authorised (HTTP 401). Log in to Instagram and retry.', 'auth');
     if (res.status === 403)
-      throw new Halt('Forbidden (HTTP 403) — session may be stale, or this list is not visible to you.', 'auth');
+      throw new Halt('Forbidden (HTTP 403). Session may be stale, or this list is not visible to you.', 'auth');
     if (res.status === 404) throw new Halt('Not found (HTTP 404).', 'notfound');
 
     let json;
@@ -810,7 +810,7 @@
         type: 'probe:result',
         key: 'graphql',
         label: 'GraphQL replay',
-        note: `not captured yet — open the ${kind} modal once, then probe again`,
+        note: `not captured yet: open the ${kind} modal once, then probe again`,
         status: null,
         usernames: [],
         count: null,
@@ -887,7 +887,7 @@
         username = p.username;
         if (p.isPrivate && p.followedByViewer === false && selfId() !== p.id) {
           throw new Halt(
-            `@${p.username} is private and you do not follow them — their stories are not visible.`,
+            `@${p.username} is private and you do not follow them. Their stories are not visible.`,
             'private'
           );
         }
@@ -974,7 +974,7 @@
         // Refuse ONLY when we are certain. An unknown relationship falls
         // through and lets the list call itself decide.
         if (p.isPrivate && p.followedByViewer === false && selfId() !== p.id) {
-          throw new Halt(`@${p.username} is private and you do not follow them — the list is not visible.`, 'private');
+          throw new Halt(`@${p.username} is private and you do not follow them. The list is not visible.`, 'private');
         }
         await sleep(baseDelay);
       }
@@ -1053,7 +1053,7 @@
               post({
                 type: 'collect:warn',
                 runId: run.id,
-                message: `Rate-limited (429). Waiting ${shown} before retry ${rateRetries}/${RATE_BACKOFF_MS.length}. Progress is saved — Stop is safe, you can resume later.`,
+                message: `Rate-limited (429). Waiting ${shown} before retry ${rateRetries}/${RATE_BACKOFF_MS.length}. Progress is saved. Stop is safe, you can resume later.`,
               });
             });
 
@@ -1096,7 +1096,7 @@
           );
         }
 
-        if (!parsed) throw new Halt('Response had no user list — the endpoint shape changed.', 'parse');
+        if (!parsed) throw new Halt('Response had no user list. The endpoint shape changed.', 'parse');
 
         const users = parsed.users.map(normaliseUser);
         total += users.length;
@@ -1203,7 +1203,7 @@
           post({
             type: 'collect:warn',
             runId: run.id,
-            message: `Pass ${pass} done — ${union} unique so far. Re-walking; one pass misses people.`,
+            message: `Pass ${pass} done: ${union} unique so far. Re-walking; one pass misses people.`,
           });
         }
 

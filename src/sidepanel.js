@@ -123,7 +123,7 @@ function send(message) {
         resolve(response || { ok: false, error: 'No response from the extension worker.' });
       });
     } catch (_) {
-      resolve({ ok: false, error: 'Extension context unavailable — reload the extension.' });
+      resolve({ ok: false, error: 'Extension context unavailable. Reload the extension.' });
     }
   });
 }
@@ -171,7 +171,11 @@ function userRowHtml(u, lead) {
       '<span class="tag warn" title="The previous capture was short, so this may have been missed then rather than followed since">unverified</span>'
     );
   }
-  if (u.isVerified) tags.push('<span class="tag v">verified</span>');
+  // No blue-check tag. Instagram's "verified" and this list's "unverified"
+  // mean unrelated things — one is the account's badge, the other is whether
+  // we trust the arrival date — and a verified account arriving in a short
+  // batch rendered both side by side. isVerified is still captured and stored
+  // if it's ever wanted again.
   if (u.isPrivate) tags.push('<span class="tag">private</span>');
   const handle = esc(u.username || `(id ${u.pk})`);
   const link = u.username
@@ -355,7 +359,7 @@ function renderSelf() {
     els.selfWarn.hidden = false;
     els.selfWarn.classList.remove('bad');
     els.selfWarn.textContent =
-      'Read directly from your following list — no followers scan needed, and not affected by how far the followers scan gets.';
+      'Read directly from your following list. No followers scan needed, and not affected by how far the followers scan gets.';
 
     const list = (mode === 'notback'
       ? tagged.filter((a) => a.followsYou === false)
@@ -391,7 +395,7 @@ function renderSelf() {
     els.selfWarn.hidden = false;
     els.selfWarn.classList.add('bad');
     els.selfWarn.textContent =
-      `The followers scan reached ${got} of ${want}, so this comparison is a guess — anyone it ` +
+      `The followers scan reached ${got} of ${want}, so this comparison is a guess. Anyone it ` +
       `never reached is listed below as not following you back, wrongly. Re-scan followers; if it ` +
       `still stops short, re-scan your following list instead, which can report follow-back ` +
       `status directly without needing followers at all.`;
@@ -578,7 +582,7 @@ function offerRescan(targetId, kind, verb) {
     els.username.value = targetId;
     els.kind.value = kind;
     show('new');
-    setStatus(`${who} is filled in — press Start stalk.`, true);
+    setStatus(`${who} is filled in. Press Start stalk.`, true);
     els.startBtn.focus();
   };
 }
@@ -603,7 +607,7 @@ async function renderCompare() {
     els.cmpRescanBtn.hidden = true;
     els.cmpNote.hidden = false;
     els.cmpNote.textContent =
-      'Capture at least two accounts first — use Start a new stalk on each of them.';
+      'Capture at least two accounts first. Use Start a new stalk on each of them.';
     els.monList.innerHTML = '';
     els.empty.hidden = true;
     return;
@@ -673,7 +677,7 @@ async function renderCompare() {
     const shortest = !qa.ok && (qb.ok || (qa.short || 0) >= (qb.short || 0)) ? aId : bId;
     els.cmpNote.hidden = false;
     els.cmpNote.textContent =
-      `At least this many — a few may be missing. ${nameOf(aId)} ${qa.reason}, ${nameOf(bId)} ${
+      `At least this many. A few may be missing. ${nameOf(aId)} ${qa.reason}, ${nameOf(bId)} ${
         qb.reason
       }.`;
     offerRescan(shortest, kind, 'Re-scan');
@@ -744,7 +748,7 @@ function renderGroups() {
       s.baselineCount
     )} accounts were already there when you started watching on ${esc(
       new Date(s.firstSnapshotAt).toLocaleDateString()
-    )} — they are not shown, because there is no way to know what order they were added in.</p>
+    )}. They are not shown, because there is no way to know what order they were added in.</p>
       <p class="fine">Hit <em>Check now</em> to look again.</p>`;
     return;
   }
@@ -774,7 +778,7 @@ function renderGroups() {
   });
   out.push(
     `<div class="gfoot">${nf.format(s.baselineCount)} accounts predate the watch and are not listed.` +
-      `<br><span class="gfoot-warn">Accounts under the same date were all found by that one check — ` +
+      `<br><span class="gfoot-warn">Accounts under the same date were all found by that one check, so ` +
       `they are not in order relative to each other.</span></div>`
   );
   els.monList.innerHTML = out.join('');
@@ -826,10 +830,10 @@ function renderControls() {
     const passNote = active.pass > 0 ? ` · re-check ${active.pass + 1}` : '';
     els.status.textContent =
       (known
-        ? `Reading ${active.kind} of ${who} — ${nf.format(active.total)} / ${nf.format(
+        ? `Reading ${active.kind} of ${who}: ${nf.format(active.total)} / ${nf.format(
             active.expectedTotal
           )}`
-        : `Reading ${active.kind} of ${who} — ${nf.format(active.total)} so far`) + passNote;
+        : `Reading ${active.kind} of ${who}: ${nf.format(active.total)} so far`) + passNote;
   } else if (!els.status.dataset.sticky) {
     els.status.textContent = '';
   }
@@ -953,7 +957,7 @@ chrome.runtime.onMessage.addListener((message) => {
         // Say it plainly rather than showing them as arrivals with a caveat.
         if (message.absorbed) {
           bits.push(
-            `${nf.format(message.absorbed)} missed by an earlier scan — added to the baseline, not counted as new.`
+            `${nf.format(message.absorbed)} missed by an earlier scan. Added to the baseline, not counted as new.`
           );
         }
         setStatus(bits.join(' '), true);
@@ -1037,7 +1041,7 @@ async function onCaptureFinished(key, run) {
       `<strong>Nothing was saved.</strong> ` +
       esc(
         (run && run.error) ||
-          'The capture returned no accounts — the list may be private or restricted.'
+          'The capture returned no accounts. The list may be private or restricted.'
       ) +
       ` <br><span class="fine">Try again; anything already collected is kept.</span>`;
     render();
@@ -1050,9 +1054,9 @@ async function onCaptureFinished(key, run) {
     els.doneMsg.hidden = false;
     els.doneMsg.classList.remove('bad');
     els.doneMsg.innerHTML =
-      `<strong>Baseline saved — ${nf.format(all.length)} accounts.</strong> ` +
+      `<strong>Baseline saved: ${nf.format(all.length)} accounts.</strong> ` +
       `We'll keep an eye on them from now on. Come back to <em>Monitor a user</em> to see who they add.` +
-      `<br><span class="fine">Listed A-Z below. Instagram does not say what order these were followed in, so this list has no chronology — only what comes next does.</span>`;
+      `<br><span class="fine">Listed A-Z below. Instagram does not say what order these were followed in, so this list has no chronology. Only what comes next does.</span>`;
     render();
     return;
   }

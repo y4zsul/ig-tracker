@@ -9,15 +9,14 @@
     <!-- ── home ─────────────────────────────────────────────────────────── -->
     <section id="screenHome" class="screen home">
       <h1>Let's lurk <span class="h1-emoji">👀</span></h1>
-      <!-- The .bi glyphs are decoration only; the label beside each is the text. -->
-      <button id="newStalkBtn" class="big primary"><span class="bi" aria-hidden="true">🌸</span><span>Start a new stalk</span></button>
-      <button id="monitorBtn" class="big"><span class="bi" aria-hidden="true">🔔</span><span>Monitor a user</span></button>
-      <button id="selfBtn" class="big"><span class="bi" aria-hidden="true">💗</span><span>My account</span></button>
-      <button id="compareBtn" class="big"><span class="bi" aria-hidden="true">🎀</span><span>Compare two accounts</span></button>
-      <button id="storiesBtn" class="big"><span class="bi" aria-hidden="true">🍿</span><span>Watch stories quietly</span></button>
+      <button id="newStalkBtn" class="big primary">Start a new stalk</button>
+      <button id="monitorBtn" class="big">Monitor a user</button>
+      <button id="selfBtn" class="big">My account</button>
+      <button id="compareBtn" class="big">Compare two accounts</button>
+      <button id="storiesBtn" class="big">Watch stories quietly</button>
       <p class="fine">
         A first capture records who someone follows right now. Every capture after that
-        reveals who they have added since — dated to when you checked.
+        reveals who they have added since, dated to when you checked.
       </p>
       <div id="ver" class="ver"></div>
     </section>
@@ -95,9 +94,9 @@
         <div class="row">
           <span class="scanlabel">Speed</span>
           <select id="selfSpeed" class="grow" aria-label="Scan pacing">
-            <option value="safe">Safe — slowest, least likely to be throttled</option>
+            <option value="safe">Safe: slowest, least likely to be throttled</option>
             <option value="fast">Fast</option>
-            <option value="max">Max — no delay between pages</option>
+            <option value="max">Max: no delay between pages</option>
           </select>
         </div>
         <div id="selfWarn" class="alert" hidden></div>
@@ -166,7 +165,7 @@
         </div>
         <div id="storyNote" class="note">
           Loads their story without sending a seen receipt, so you should not appear in their
-          viewer list. Do not open the same story in Instagram itself afterwards — that will.
+          viewer list. Do not open the same story in Instagram itself afterwards. That will.
         </div>
         <div id="storyStatus" class="status"></div>
       </div>

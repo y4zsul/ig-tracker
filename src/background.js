@@ -431,7 +431,7 @@ async function sendToPage(command, tabId) {
     await chrome.tabs.sendMessage(id, { type: 'IGFO_COMMAND', command });
     return { ok: true, tabId: id };
   } catch (e) {
-    return { ok: false, error: 'Could not reach the Instagram tab — reload it and try again.' };
+    return { ok: false, error: 'Could not reach the Instagram tab. Reload it and try again.' };
   }
 }
 
@@ -1105,7 +1105,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const u = String(message.username || '').replace(/^@/, '').trim();
         const targetId = /^\d{3,}$/.test(u) ? u : state.ids[u.toLowerCase()] || state.selfId;
         if (!targetId) {
-          sendResponse({ ok: false, error: 'No id for that target — use Me, or a numeric id.' });
+          sendResponse({ ok: false, error: 'No id for that target. Use Me, or a numeric id.' });
           return;
         }
         sendResponse(await sendToPage({ type: 'probe', targetId, kind: message.kind }));
@@ -1133,7 +1133,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (!r || (r.status !== 'running' && r.status !== 'starting')) return;
             r.status = r.users.length > 0 ? 'partial' : 'aborted';
             r.finishedAt = Date.now();
-            r.warning = 'Stopped locally — the Instagram tab did not respond.';
+            r.warning = 'Stopped locally. The Instagram tab did not respond.';
             if (state.activeRunId === r.id) state.activeRunId = null;
             ingestSnapshot(r);
             scheduleSave(r.id);

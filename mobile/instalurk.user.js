@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.1.0
+// @version      2.2.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -193,7 +193,7 @@
       throw new Halt('Instagram is rate limiting (HTTP 429).', 'rate', after);
     }
     if (res.status === 401 || res.status === 403) {
-      throw new Halt('Not authorised — make sure you are logged in, then reload.', 'auth');
+      throw new Halt('Not authorised. Make sure you are logged in, then reload.', 'auth');
     }
 
     let json;
@@ -368,7 +368,7 @@
             while (Date.now() < until) {
               if (run.aborted) return { users: [...union.values()], aborted: true, reachedEnd };
               onProgress({
-                note: `Rate limited. Waiting ${Math.ceil((until - Date.now()) / 1000)}s — keep this tab open.`,
+                note: `Rate limited. Waiting ${Math.ceil((until - Date.now()) / 1000)}s. Keep this tab open.`,
               });
               await sleep(1000);
             }
@@ -379,7 +379,7 @@
 
         if (json && json.special_empty_state && (!json.users || !json.users.length)) {
           if (union.size) break;
-          throw new Halt("Instagram won't show this list — it may be private or restricted.", 'restricted');
+          throw new Halt("Instagram won't show this list. It may be private or restricted.", 'restricted');
         }
         if (!json || !Array.isArray(json.users)) throw new Halt('Unexpected response shape.', 'parse');
 
@@ -582,46 +582,33 @@
       /* Same token set as the desktop side panel, so the two look like one
          product. Declared after the reset above: an "all: initial" would wipe
          custom properties declared before it.
-         (No backticks in here — this whole block is a JS template literal.) */
+         (No backticks anywhere in this block: it is a JS template literal.)
+
+         Dark only, like the desktop panel. Frosted glass needs a dark,
+         saturated ground to read, so there is no light variant to fall back
+         to and the prefers-color-scheme override is gone. */
       :host {
-        --bg: #fde9f2;
-        --bg2: #fff4f9;
-        --surface: #ffffff;
-        --surface2: #fff6e4;   /* cream — second surface, for quiet blocks */
-        --fg: #4a2436;
-        --muted: #a5798e;
-        --line: #f7cfe1;
-        --line-soft: #fde8f1;
-        --accent: #e2478d;
-        --accent2: #b167da;
-        --accent-soft: #ffe6f1;
-        --warn: #9a5b00;
-        --warn-bg: #fff4e0;
-        --warn-line: #f4d7a4;
+        color-scheme: dark;
+        --bg: #241528;
+        --bg2: rgba(0,0,0,.24);          /* recessed: inputs */
+        --surface: rgba(255,255,255,.10); /* the glass */
+        --surface2: rgba(255,255,255,.055);
+        --solid: rgba(36,18,42,.55);      /* opaque-ish: list rows */
+        --fg: #ffffff;
+        --muted: rgba(255,255,255,.66);
+        --line: rgba(255,255,255,.30);    /* the rim */
+        --line-soft: rgba(255,255,255,.12);
+        --accent: #ff7ab8;
+        --accent2: #c58cf5;
+        --accent-soft: rgba(255,255,255,.16);
         --r: 16px;
         --r-lg: 22px;
         --pill: 999px;
+        --blur: blur(20px) saturate(150%);
+        --shadow: 0 4px 12px rgba(10,2,9,.4);
         /* Rounded display face where the platform has one (SF Rounded covers
            every iPhone); Android falls through to its own UI face. */
         --display: ui-rounded, "SF Pro Rounded", system-ui, sans-serif;
-      }
-      @media (prefers-color-scheme: dark) {
-        :host {
-          --bg: #17121b;
-          --bg2: #1e1724;
-          --surface: #241c2b;
-          --surface2: #2c2130;
-          --fg: #f6eaf2;
-          --muted: #ac96a6;
-          --line: #3b2e41;
-          --line-soft: #2c2333;
-          --accent: #ff7fb8;
-          --accent2: #c08bf5;
-          --accent-soft: #3a2337;
-          --warn: #f0c887;
-          --warn-bg: #33260f;
-          --warn-line: #55421d;
-        }
       }
 
       * { box-sizing: border-box; font-family: -apple-system, system-ui, sans-serif; }
@@ -636,19 +623,26 @@
         z-index: 2147483000;
         width: 58px; height: 58px; border-radius: 50%;
         border: 3px solid rgba(255,255,255,.75);
-        background: linear-gradient(135deg, #ff8ec2, #e2478d 55%, #b167da);
+        background: linear-gradient(135deg, #ff9ecb, #ff7ab8 50%, #c58cf5);
         color: #fff; font-size: 24px;
-        box-shadow: 0 8px 22px rgba(190, 60, 130, .45); cursor: pointer;
+        box-shadow: 0 8px 24px rgba(255, 90, 170, .5), 0 2px 8px rgba(10,2,9,.4);
+        cursor: pointer;
         touch-action: none; /* a drag must not scroll the page underneath */
       }
       .fab:active { transform: scale(.94); }
       .fab.dragging { opacity: .9; transform: scale(1.06); }
 
+      /* The colour fields the glass feeds on: backdrop-filter blurs what is
+         BEHIND an element, so over a flat ground it renders as grey mud.
+         Radial gradients rather than blurred divs, which costs nothing. */
       .sheet {
         position: fixed; inset: 0; z-index: 2147483001;
         display: flex; flex-direction: column;
-        background: var(--bg); color: var(--fg);
-        background-image: radial-gradient(130% 34% at 50% 0%, var(--bg2) 0%, transparent 70%);
+        background-color: var(--bg); color: var(--fg);
+        background-image:
+          radial-gradient(58% 26% at 6% 2%, rgba(255,95,168,.85) 0%, transparent 60%),
+          radial-gradient(52% 22% at 98% 18%, rgba(168,85,247,.68) 0%, transparent 62%),
+          radial-gradient(58% 26% at 22% 99%, rgba(255,143,196,.5) 0%, transparent 60%);
         padding-top: env(safe-area-inset-top, 0px);
         padding-bottom: env(safe-area-inset-bottom, 0px);
       }
@@ -666,8 +660,7 @@
       h1 {
         margin: 0 0 4px; font-family: var(--display);
         font-size: 22px; font-weight: 800; letter-spacing: -.025em;
-        background: linear-gradient(100deg, var(--accent), var(--accent2));
-        -webkit-background-clip: text; background-clip: text; color: transparent;
+        color: #fff; text-shadow: 0 2px 14px rgba(255,90,170,.55);
       }
       /* Holds a line even when empty, so the header is the same height on
          every view and the content below does not jump around. */
@@ -678,8 +671,9 @@
            Without a z-index the header paints over them, so they stay visible
            but swallow every tap. */
         z-index: 3;
-        width: 38px; height: 38px; border-radius: 50%; border: none;
-        background: var(--accent-soft); color: var(--accent);
+        width: 38px; height: 38px; border-radius: 50%;
+        border: 1px solid var(--line);
+        background: var(--accent-soft); color: #fff;
         font-size: 18px; font-weight: 700; cursor: pointer;
       }
       .x { right: 12px; }
@@ -693,46 +687,51 @@
         font-size: 15px; font-weight: 700;
         border-radius: var(--pill); border: none; cursor: pointer;
         background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
-        box-shadow: 0 4px 12px rgba(190, 60, 130, .22);
+        box-shadow: 0 6px 18px rgba(255,90,170,.38), var(--shadow);
       }
       button.act.ghost {
-        background: var(--surface); color: var(--accent);
-        border: 1px solid var(--line); font-weight: 700; box-shadow: none;
+        background: var(--surface); color: #fff;
+        -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+        border: 1px solid var(--line); font-weight: 700; box-shadow: var(--shadow);
       }
       button.act:disabled { opacity: .5; }
 
-      /* Home menu: a glyph, then the label stack. The glyph is decoration. */
+      /* Home menu: chunky glass slabs holding a title and its one-line note. */
       button.big {
-        display: flex; align-items: center; gap: 13px;
+        display: flex; align-items: center;
         width: 100%; padding: 16px 18px; margin-bottom: 11px;
         text-align: left;
         border-radius: var(--r-lg); border: 1px solid var(--line); cursor: pointer;
-        background: var(--surface); color: inherit;
-        box-shadow: 0 1px 2px rgba(150, 60, 105, .07);
+        background: var(--surface2); color: inherit;
+        -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+        box-shadow: var(--shadow);
       }
       button.big:last-child { margin-bottom: 0; }
-      button.big .bi { flex: 0 0 auto; font-size: 23px; font-style: normal; line-height: 1; }
       button.big .lab { flex: 1 1 auto; min-width: 0; }
       button.big b { display: block; font-family: var(--display); font-size: 16.5px; font-weight: 800; letter-spacing: -.01em; }
-      button.big em { display: block; font-style: normal; font-size: 12px; font-weight: 500; opacity: .7; margin-top: 3px; }
+      button.big em { display: block; font-style: normal; font-size: 12px; font-weight: 500; opacity: .72; margin-top: 3px; }
       button.big.p {
         background: linear-gradient(135deg, var(--accent), var(--accent2));
-        color: #fff; border: none;
-        box-shadow: 0 8px 20px rgba(190, 60, 130, .3);
+        color: #fff; border: 1px solid rgba(255,255,255,.5);
+        box-shadow: 0 10px 26px rgba(255,90,170,.4), var(--shadow);
       }
       button.big.p em { opacity: .88; }
 
       input, select {
         width: 100%; padding: 13px 15px; font-size: 16px;
         border-radius: var(--pill); border: 1px solid var(--line);
-        background: var(--surface); color: inherit;
+        background: var(--bg2); color: inherit;
       }
+      /* Solid, not translucent: the native picker paints its own popup and a
+         see-through control is unreadable over a bright field. */
+      select { background: #3a2440; }
       input::placeholder { color: var(--muted); }
 
       .note {
         margin: 0 14px 10px; padding: 10px 13px; font-size: 11.5px; line-height: 1.5;
         border-radius: var(--r); background: var(--surface2);
-        border: 1px solid var(--warn-line); color: var(--muted);
+        -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+        border: 1px solid var(--line-soft); color: rgba(255,255,255,.72);
       }
       .note[hidden] { display: none; }
 
@@ -741,17 +740,22 @@
         flex: 1; padding: 10px 6px; font-size: 12px; font-weight: 700;
         border-radius: var(--pill); border: 1px solid var(--line);
         background: var(--surface); color: inherit; cursor: pointer;
+        box-shadow: var(--shadow);
       }
       .tab[aria-selected="true"] {
         background: linear-gradient(135deg, var(--accent), var(--accent2));
-        border-color: transparent; color: #fff;
+        border-color: rgba(255,255,255,.5); color: #fff;
       }
 
       .list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 14px 28px; }
+      /* No backdrop-filter here. Mobile renders every row rather than
+         virtualising, so a filtered layer per card would be hundreds of them.
+         A semi-opaque fill instead, dark enough that the densest text in the
+         app stays readable wherever a bright field sits behind it. */
       .card {
         display: flex; align-items: center; gap: 10px; padding: 12px 14px;
-        margin-bottom: 8px; border: 1px solid var(--line); border-radius: var(--r);
-        background: var(--surface);
+        margin-bottom: 8px; border: 1px solid var(--line-soft); border-radius: var(--r);
+        background: var(--solid);
       }
       .who { flex: 1; min-width: 0; }
       .u { display: block; font-weight: 700; font-size: 15px; color: inherit; text-decoration: none;
@@ -760,51 +764,63 @@
            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
       .go {
         flex: 0 0 auto; font-size: 11.5px; font-weight: 700; text-decoration: none;
-        color: var(--accent); background: var(--accent-soft);
+        color: #ffd3e8; background: rgba(255,122,184,.24);
         padding: 6px 12px; border-radius: var(--pill);
       }
+      /* Neutral, not amber: "unverified" is a caveat about how the list was
+         collected, not a warning about the account. */
       .flag { font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .03em;
               padding: 4px 7px; border-radius: var(--pill);
-              border: 1px solid var(--warn-line); color: var(--warn); background: var(--warn-bg); }
+              border: 1px solid var(--line-soft); color: rgba(255,255,255,.78);
+              background: rgba(255,255,255,.1); }
 
       .ghead { display: flex; justify-content: space-between; align-items: center;
                gap: 8px; padding: 16px 4px 6px; }
       .gtime { font-family: var(--display); font-weight: 800; font-size: 13.5px; letter-spacing: -.01em; }
       .gcount { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
                 color: #fff; background: linear-gradient(135deg, var(--accent), var(--accent2));
-                padding: 5px 10px; border-radius: var(--pill); }
+                padding: 5px 10px; border-radius: var(--pill);
+                box-shadow: 0 3px 10px rgba(255,90,170,.35); }
       .ghead-note {
         margin: 0 0 8px; padding: 8px 12px; font-size: 10.5px; line-height: 1.45;
-        color: var(--warn); background: var(--warn-bg);
-        border: 1px solid var(--warn-line); border-radius: var(--r);
+        color: rgba(255,255,255,.82); background: rgba(255,255,255,.09);
+        border: 1px solid rgba(255,255,255,.24); border-radius: var(--r);
       }
       .gfoot {
         margin: 18px 0 0; padding: 12px 14px; font-size: 11px; line-height: 1.55;
         color: var(--muted); background: var(--surface2);
-        border: 1px solid var(--warn-line); border-radius: var(--r);
+        -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+        border: 1px solid var(--line-soft); border-radius: var(--r);
       }
 
       .empty {
         margin: 4px 0; padding: 34px 22px; text-align: center;
         color: var(--muted); font-size: 13.5px; line-height: 1.6;
-        background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-lg);
+        background: var(--surface);
+        -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+        border: 1px solid var(--line); border-radius: var(--r-lg);
+        box-shadow: var(--shadow);
       }
+      .empty b { color: #fff; }
 
       .stat { display: flex; gap: 8px; padding: 0 14px 12px; }
       .stat div {
         flex: 1; text-align: center; padding: 11px 6px;
-        border: 1px solid var(--warn-line); border-radius: var(--r);
+        border: 1px solid var(--line-soft); border-radius: var(--r);
         background: var(--surface2);
+        -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
         font-size: 10.5px; color: var(--muted);
       }
       .stat b {
         display: block; font-family: var(--display);
-        font-size: 19px; font-weight: 800; color: var(--accent);
+        font-size: 19px; font-weight: 800; color: #fff;
       }
 
       .story {
         margin-bottom: 10px; border: 1px solid var(--line); border-radius: var(--r-lg);
-        background: var(--surface); overflow: hidden;
+        background: var(--surface);
+        -webkit-backdrop-filter: var(--blur); backdrop-filter: var(--blur);
+        box-shadow: var(--shadow); overflow: hidden;
       }
       .story-head {
         display: flex; justify-content: space-between; align-items: center; gap: 8px;
@@ -818,8 +834,9 @@
       .story-acts button {
         width: 100%; padding: 12px 6px;
         font-family: var(--display); font-size: 13.5px; font-weight: 700;
-        border-radius: var(--pill); border: none; cursor: pointer;
+        border-radius: var(--pill); border: 1px solid rgba(255,255,255,.5); cursor: pointer;
         background: linear-gradient(135deg, var(--accent), var(--accent2)); color: #fff;
+        box-shadow: 0 6px 18px rgba(255,90,170,.38), var(--shadow);
       }
       .story-acts button:active { filter: brightness(.92); }
     </style>
@@ -891,20 +908,20 @@
 
   function renderHome() {
     ui.title.textContent = "Let's lurk 👀";
-    ui.sub.textContent = quotaHit ? 'Storage is full — delete a watch to save more.' : '';
+    ui.sub.textContent = quotaHit ? 'Storage is full. Delete a watch to save more.' : '';
     ui.back.hidden = true;
     ui.header.classList.remove('hasback');
     setNote('', false);
     const watching = Object.keys(data.tracks).length;
     ui.controls.innerHTML = `
       <div class="pad">
-        <button class="big p" data-go="self"><i class="bi">💗</i><span class="lab"><b>My account</b><em>Who doesn't follow you back</em></span></button>
-        <button class="big" data-go="stalk"><i class="bi">🌸</i><span class="lab"><b>Start a new stalk</b><em>Record who they follow now, to monitor later</em></span></button>
-        <button class="big" data-go="monitor"><i class="bi">🔔</i><span class="lab"><b>Monitor a user</b><em>${
+        <button class="big p" data-go="self"><span class="lab"><b>My account</b><em>Who doesn't follow you back</em></span></button>
+        <button class="big" data-go="stalk"><span class="lab"><b>Start a new stalk</b><em>Record who they follow now, to monitor later</em></span></button>
+        <button class="big" data-go="monitor"><span class="lab"><b>Monitor a user</b><em>${
           watching ? `See who they've added · ${watching} watched` : 'Nothing watched yet'
         }</em></span></button>
-        <button class="big" data-go="compare"><i class="bi">🎀</i><span class="lab"><b>Compare two accounts</b><em>Who they both follow</em></span></button>
-        <button class="big" data-go="stories"><i class="bi">🍿</i><span class="lab"><b>Watch stories quietly</b><em>No seen receipt sent</em></span></button>
+        <button class="big" data-go="compare"><span class="lab"><b>Compare two accounts</b><em>Who they both follow</em></span></button>
+        <button class="big" data-go="stories"><span class="lab"><b>Watch stories quietly</b><em>No seen receipt sent</em></span></button>
       </div>`;
     ui.list.innerHTML = `<div class="empty">Instagram never says when a follow happened, so a first
       capture has no order. Only what shows up <i>after</i> it can be dated.</div>`;
@@ -948,7 +965,7 @@
     }
     if (needFollowers) {
       setNote(
-        'Instagram left out follow-back info this time, so your followers list is needed too. That one is slower — served 25 at a time — and may not finish on a large account.',
+        'Instagram left out follow-back info this time, so your followers list is needed too. That one is slower (served 25 at a time) and may not finish on a large account.',
         true
       );
       ui.list.innerHTML = '<div class="empty">Tap <b>Scan followers</b> to finish.</div>';
@@ -957,7 +974,7 @@
 
     let list;
     if (direct) {
-      setNote('Read straight from your following list — nothing is missing.', true);
+      setNote('Read straight from your following list. Nothing is missing.', true);
       list =
         selfMode === 'mutual'
           ? tagged.filter((u) => u.followsYou === true)
@@ -1017,7 +1034,7 @@
       ui.controls.innerHTML = '';
       setNote('', false);
       ui.list.innerHTML =
-        '<div class="empty"><b>Nothing watched yet.</b><br>Use <b>Start a new stalk</b> first — that first capture is the baseline.</div>';
+        '<div class="empty"><b>Nothing watched yet.</b><br>Use <b>Start a new stalk</b> first. That first capture is the baseline.</div>';
       return;
     }
     if (!monKey || !data.tracks[monKey]) monKey = keys[0];
@@ -1051,7 +1068,7 @@
       setNote('', false);
       ui.list.innerHTML = `<div class="empty"><b>Nobody new yet.</b><br>
         ${nf.format(baselineCount)} accounts were already there when you started watching
-        on ${esc(dtShort.format(new Date(t.snapshots[0].at)))} — they aren't listed, because
+        on ${esc(dtShort.format(new Date(t.snapshots[0].at)))}. They aren't listed, because
         there's no way to know what order they were added in.<br><br>Tap <b>Check now</b> to look again.</div>`;
       return;
     }
@@ -1076,7 +1093,7 @@
             (i === 0 ? `<span class="gcount">${nf.format(list.length)} new</span>` : '') +
             `</div>` +
             (shaky
-              ? `<div class="ghead-note">${nf.format(shaky)} unverified — the previous capture came
+              ? `<div class="ghead-note">${nf.format(shaky)} unverified: the previous capture came
                  up short, so they may have been followed long ago and simply missed.</div>`
               : '') +
             list.sort(byName).map(card).join('')
@@ -1084,7 +1101,7 @@
         })
         .join('') +
       `<div class="gfoot">${nf.format(baselineCount)} accounts predate the watch and aren't listed.
-       <br>Accounts under one date were all found by that single check — they aren't in order
+       <br>Accounts under one date were all found by that single check, so they aren't in order
        relative to each other.</div>`;
   }
 
@@ -1130,7 +1147,7 @@
         )
         .join('');
 
-    ui.sub.textContent = 'Runs on captures you already have — no requests.';
+    ui.sub.textContent = 'Runs on captures you already have. No requests.';
     ui.controls.innerHTML = `
       <div class="pad"><select id="cA">${opts(cmpA)}</select></div>
       <div class="pad"><select id="cB">${opts(cmpB)}</select></div>`;
@@ -1164,7 +1181,7 @@
     } else if (!qa.ok || !qb.ok) {
       // Only omission is possible here — everyone shown really is in both.
       setNote(
-        `At least this many — a capture came up short, so a few may be missing. ` +
+        `At least this many. A capture came up short, so a few may be missing. ` +
           `@${ta.username} ${qa.text}, @${tb.username} ${qb.text}. Re-check them from Monitor.`,
         true
       );
@@ -1201,7 +1218,7 @@
 
     if (!stories) {
       setNote(
-        "Loads their story without sending a seen receipt, so you shouldn't appear in their viewer list. Don't open the same story in Instagram afterwards — that will.",
+        "Loads their story without sending a seen receipt, so you shouldn't appear in their viewer list. Don't open the same story in Instagram afterwards. That will.",
         true
       );
       ui.list.innerHTML = '<div class="empty">Enter a username and tap <b>Load story</b>.</div>';
@@ -1218,7 +1235,7 @@
     setNote(
       'Loaded without a seen receipt. ' +
         (canShareFiles()
-          ? 'Save opens the share sheet — choose Save Image or Save Video to put it in Photos.'
+          ? 'Save opens the share sheet. Choose Save Image or Save Video to put it in Photos.'
           : 'Save downloads the file to your device.'),
       true
     );
@@ -1315,7 +1332,7 @@
       const out = await walkList(kind, pk, expected, progress);
       data.self[kind] = out.users;
       data.self.at = Date.now();
-      if (!save()) setNote('Ran out of storage — some results may not be saved.', true);
+      if (!save()) setNote('Ran out of storage. Some results may not be saved.', true);
       selfMode = 'notback';
     } catch (e) {
       setNote(e && e.message ? e.message : String(e), true);
@@ -1333,13 +1350,13 @@
       const t = await resolveTarget(input);
       const expected = t.info && t.info.following;
       const out = await walkList('following', t.pk, expected, progress);
-      if (!out.users.length) throw new Halt('No accounts returned — the list may be hidden.', 'empty');
+      if (!out.users.length) throw new Halt('No accounts returned. The list may be hidden.', 'empty');
 
       const r = ingest('following', t.pk, t.username, out.users, expected, out.reachedEnd && !out.aborted);
       monKey = `following:${t.pk}`;
       if (r.isFirst) {
         setNote(
-          `Baseline saved — ${nf.format(r.total)} accounts. We'll keep an eye on them. Come back to Monitor to see who they add.`,
+          `Baseline saved: ${nf.format(r.total)} accounts. We'll keep an eye on them. Come back to Monitor to see who they add.`,
           true
         );
         go('monitor');
@@ -1347,7 +1364,7 @@
         setNote(
           r.arrived
             ? `${nf.format(r.arrived)} new since the last check.`
-            : 'Already watching them — nobody new.',
+            : 'Already watching them. Nobody new.',
           true
         );
         go('monitor');
@@ -1370,12 +1387,12 @@
       const expected = info && info.following;
       if (info && info.username) t.username = info.username;
       const out = await walkList(t.kind, t.pk, expected, progress);
-      if (!out.users.length) throw new Halt('No accounts returned — the list may be hidden.', 'empty');
+      if (!out.users.length) throw new Halt('No accounts returned. The list may be hidden.', 'empty');
 
       const r = ingest(t.kind, t.pk, t.username, out.users, expected, out.reachedEnd && !out.aborted);
       const bits = [r.arrived ? `${nf.format(r.arrived)} new.` : 'Nobody new.'];
       if (r.absorbed) {
-        bits.push(`${nf.format(r.absorbed)} were missed by an earlier scan — added to the baseline, not counted as new.`);
+        bits.push(`${nf.format(r.absorbed)} were missed by an earlier scan. Added to the baseline, not counted as new.`);
       }
       if (r.departed) bits.push(`${nf.format(r.departed)} no longer followed.`);
       render();
