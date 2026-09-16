@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.3.0
+// @version      1.4.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -718,6 +718,10 @@
         background: transparent; cursor: pointer; font-family: inherit;
       }
       .story-acts a:active, .story-acts button:active { background: rgba(224,53,127,.12); }
+      .story-acts .fill {
+        flex: 1.4; background: linear-gradient(135deg,#e0357f,#a34ae0);
+        color: #fff; border-color: transparent;
+      }
     </style>
 
     <button class="fab">✌︎</button>
@@ -1112,7 +1116,7 @@
     }
 
     setNote(
-      'Loaded without a seen receipt. To keep a photo, press and hold it → Add to Photos. For video, use Save below, then Download Linked File.',
+      'Loaded without a seen receipt. Save opens the iOS share sheet — choose Save Image or Save Video to put it in Photos.',
       true
     );
 
@@ -1146,8 +1150,11 @@
         // link itself offers Download Linked File.
         const acts =
           `<div class="story-acts">` +
-          `<a href="${esc(url)}" download="${esc(name)}" target="_blank" rel="noreferrer noopener">Save</a>` +
-          `<button data-copy="${esc(url)}">Copy link</button>` +
+          `<button class="fill" data-save="${esc(url)}" data-name="${esc(name)}" data-type="${
+            it.isVideo ? 'video/mp4' : 'image/jpeg'
+          }">Save</button>` +
+          `<a href="${esc(url)}" target="_blank" rel="noreferrer noopener">Open</a>` +
+          `<button data-copy="${esc(url)}">Link</button>` +
           `</div>`;
 
         return (
@@ -1280,6 +1287,67 @@
     }
   }
 
+  // Fetched media, kept so a retry does not re-download it.
+  const blobCache = new Map();
+
+  /**
+   * Saves a story photo or video to the device.
+   *
+   * The only route on iOS that reaches Photos is the native share sheet with
+   * the file attached — `<a download>` is ignored cross-origin, and opening the
+   * raw URL just plays the video with no way to keep it.
+   *
+   * navigator.share() must be called inside a user gesture, and awaiting the
+   * fetch spends it. So when the gesture has expired the blob is kept and the
+   * button asks for a second tap, which shares immediately with a fresh one.
+   */
+  async function saveMedia(btn, url, name, type) {
+    const reset = (t, ms) => {
+      btn.textContent = t;
+      if (ms) setTimeout(() => (btn.textContent = 'Save'), ms);
+    };
+
+    try {
+      let blob = blobCache.get(url);
+      if (!blob) {
+        reset('Fetching…');
+        // Signed CDN URLs need no cookies, and omitting them avoids a
+        // credentialed cross-origin request being rejected outright.
+        const res = await nativeFetch(url, { credentials: 'omit' });
+        if (!res.ok) throw new Error('http ' + res.status);
+        blob = await res.blob();
+        blobCache.set(url, blob);
+      }
+
+      const file = new File([blob], name, { type: blob.type || type });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        reset('Save');
+        await navigator.share({ files: [file] });
+        reset('Saved', 1600);
+        return;
+      }
+
+      // Desktop and anything without file sharing: a blob URL is same-origin,
+      // so the download attribute works here even though it would not on the
+      // CDN URL.
+      const obj = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = obj;
+      a.download = name;
+      root.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(obj), 30000);
+      reset('Saved', 1600);
+    } catch (e) {
+      const n = e && e.name;
+      if (n === 'AbortError') return reset('Save'); // share sheet dismissed
+      if (blobCache.has(url)) return reset('Tap again'); // gesture expired, file is ready
+      // Usually CORS on the CDN. Open is still there as a manual route.
+      reset('Use Open →', 2500);
+    }
+  }
+
   async function loadStory(input) {
     busy(true);
     setNote('', false);
@@ -1322,6 +1390,9 @@
       ui.list.scrollTop = 0;
       return render();
     }
+
+    const sv = e.target.closest('[data-save]');
+    if (sv) return saveMedia(sv, sv.dataset.save, sv.dataset.name, sv.dataset.type);
 
     const copy = e.target.closest('[data-copy]');
     if (copy) {
