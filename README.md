@@ -9,11 +9,18 @@ Chrome and it works.
 > **Just want to use it?**
 > [Download the zip](https://github.com/y4zsul/ig-tracker/releases/latest/download/instalurk.zip),
 > then follow [INSTALL.md](INSTALL.md) — about a minute, no tools needed.
+>
+> Use that link rather than the green **Code → Download ZIP** button. The green
+> button hands you the whole repository — source, docs, the phone script — when
+> all you want is the packaged extension.
 
-<!-- That link resolves to the newest release's asset, so it never needs
-     updating, and GitHub counts every hit. The copy still in download/ is
-     kept only so links already shared elsewhere keep working; downloads
-     through that path are not counted. -->
+<!-- The download link resolves to the newest release's asset, so it never
+     needs updating, and GitHub counts every hit on it.
+
+     Two other routes exist and neither is counted: the copy still in
+     download/, kept only so links already shared elsewhere keep working, and
+     the green Code -> Download ZIP button, which cannot be turned off on a
+     public repo. Treat the release number as a floor, not an exact count. -->
 
 ## Releases
 
