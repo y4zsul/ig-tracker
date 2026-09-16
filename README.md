@@ -1,4 +1,4 @@
-# Stalk That Hoe!
+# InstaLurk
 
 A Manifest V3 Chrome extension that tracks **who an Instagram account starts
 following over time**, and dates each new follow to when it was spotted.
@@ -7,7 +7,7 @@ No build step, no dependencies, no account, no server. Load the folder into
 Chrome and it works.
 
 > **Just want to use it?**
-> [Download the zip](https://github.com/y4zsul/ig-tracker/raw/main/download/stalk-that-hoe.zip),
+> [Download the zip](https://github.com/y4zsul/ig-tracker/raw/main/download/instalurk.zip),
 > then follow [INSTALL.md](INSTALL.md) — about a minute, no tools needed.
 
 ## What it can and cannot do
@@ -95,13 +95,13 @@ is which, so the whole batch is flagged **unverified** rather than guessed at.
 ## On your phone
 
 Chrome extensions don't exist on mobile, so the phone version is a **userscript**
-— one file (`mobile/stalk-that-hoe.user.js`) that a script manager runs inside
+— one file (`mobile/instalurk.user.js`) that a script manager runs inside
 Instagram. Same engine, one self-contained file, no extension needed.
 
 It works because the script runs *inside* the instagram.com page, so the browser
 attaches your session itself. Nothing is uploaded and there's no account.
 
-It does four things: **My account** (who doesn't follow you back), **Start a new
+It does five things: **My account** (who doesn't follow you back), **Start a new
 stalk**, **Monitor a user**, **Compare two accounts**, and **Watch stories
 quietly**.
 
@@ -148,14 +148,14 @@ won't be listed until you do this:
 In Safari, open:
 
 ```
-github.com/y4zsul/ig-tracker/blob/main/mobile/stalk-that-hoe.user.js
+github.com/y4zsul/ig-tracker/blob/main/mobile/instalurk.user.js
 ```
 
 - **Long-press the "Raw" button** → **Download Linked File**
 - Tap the **⬇ downloads arrow** right of the address bar
-- Tap the **magnifying glass** next to `stalk-that-hoe.user.js` — it opens in Files
+- Tap the **magnifying glass** next to `instalurk.user.js` — it opens in Files
 
-✅ *Check:* you can see `stalk-that-hoe.user.js` in the Files app.
+✅ *Check:* you can see `instalurk.user.js` in the Files app.
 
 **Step 6 — move it into the folder**
 
@@ -166,14 +166,14 @@ github.com/y4zsul/ig-tracker/blob/main/mobile/stalk-that-hoe.user.js
 **Step 7 — turn the script on**
 
 Back on instagram.com, tap **аА** → **Userscripts**. You should see
-**Stalk That Hoe!** listed. **If it's greyed out, tap it** — greyed means
+**InstaLurk** listed. **If it's greyed out, tap it** — greyed means
 disabled.
 ✅ *Check:* it shows the full name (not the filename) and isn't greyed.
 
 **Step 8 — reload**
 
 **Pull down to refresh** Instagram. Scripts only inject on page load.
-✅ *Check:* a pink **✌︎** button appears near the bottom-right.
+✅ *Check:* a pink **👀** button appears near the bottom-right.
 
 ---
 
@@ -197,22 +197,22 @@ Firefox** → **Add**. (Tampermonkey works too.)
 In Firefox, open:
 
 ```
-raw.githubusercontent.com/y4zsul/ig-tracker/main/mobile/stalk-that-hoe.user.js
+raw.githubusercontent.com/y4zsul/ig-tracker/main/mobile/instalurk.user.js
 ```
 
 Violentmonkey intercepts it and shows an install page → tap **Install**.
-✅ *Check:* the confirmation says **Stalk That Hoe!** with a version number.
+✅ *Check:* the confirmation says **InstaLurk** with a version number.
 
 **Step 4 — open Instagram**
 
 Go to **instagram.com** in Firefox and log in. Use the website, not the app.
-✅ *Check:* a pink **✌︎** button appears near the bottom-right.
+✅ *Check:* a pink **👀** button appears near the bottom-right.
 
 ---
 
 ### Using it
 
-Tap **✌︎** to open. **You can drag the button anywhere** — it remembers where
+Tap **👀** to open. **You can drag the button anywhere** — it remembers where
 you put it, which matters because browser toolbars sit in different places.
 
 | Screen | What it does |
@@ -234,7 +234,7 @@ which is what Monitor shows.
 
 **Android:** open the raw link again and Violentmonkey offers to update.
 
-**iPhone:** delete the old `stalk-that-hoe.user.js` from `On My iPhone →
+**iPhone:** delete the old `instalurk.user.js` from `On My iPhone →
 Userscripts` **first**, then repeat steps 5 and 6. Two files sharing a name will
 confuse it. Check the version in the Userscripts popup to confirm it took.
 
@@ -242,7 +242,7 @@ confuse it. Check the version in the Userscripts popup to confirm it took.
 
 | Symptom | Cause |
 | --- | --- |
-| No ✌︎ button | Not on instagram.com in the right browser, script disabled, or the page wasn't reloaded |
+| No 👀 button | Not on instagram.com in the right browser, script disabled, or the page wasn't reloaded |
 | "Not logged in" | Log into Instagram in that browser and reload |
 | "Instagram is rate limiting" | Too many requests. It waits automatically — leave the tab open |
 | "Instagram wants a security check" | Clear it in the Instagram app, then retry |
@@ -258,7 +258,7 @@ src/interceptor.js     MAIN world: header harvest, collector, pagination
 src/bridge.js          two-way relay
 src/background.js      run state, history diffing, persistence
 src/sidepanel.{html,css,js}
-mobile/stalk-that-hoe.user.js   the phone version, one self-contained file
+mobile/instalurk.user.js   the phone version, one self-contained file
 ```
 
 `mobile/` is not referenced by `manifest.json` and is not in the downloadable

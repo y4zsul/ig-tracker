@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Stalk That Hoe!
+// @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.5.1
+// @version      2.0.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -42,6 +42,12 @@
 (() => {
   'use strict';
 
+  // These three identifiers keep their old names on purpose, despite the
+  // rename to InstaLurk:
+  //   - the guard stops TWO copies running if someone still has the old script
+  //     installed alongside this one, which the rename makes likely
+  //   - STORE_KEY holds saved baselines, and a baseline cannot be recreated
+  //     retroactively, so changing it would silently destroy people's history
   if (window.__stalkThatHoeMobile) return;
   Object.defineProperty(window, '__stalkThatHoeMobile', { value: true });
 
@@ -726,13 +732,13 @@
       .story-acts button:active { filter: brightness(.92); }
     </style>
 
-    <button class="fab">✌︎</button>
+    <button class="fab" aria-label="Open InstaLurk">👀</button>
 
     <div class="sheet" hidden>
       <button class="x">✕</button>
       <button class="bk" hidden>‹</button>
       <header>
-        <h1 id="title">Stalk That Hoe!</h1>
+        <h1 id="title">Let's lurk 👀</h1>
         <div class="sub" id="sub"></div>
       </header>
       <div id="controls"></div>
@@ -792,7 +798,7 @@
   // --- views -----------------------------------------------------------------
 
   function renderHome() {
-    ui.title.textContent = 'Stalk That Hoe!';
+    ui.title.textContent = "Let's lurk 👀";
     ui.sub.textContent = quotaHit ? 'Storage is full — delete a watch to save more.' : '';
     ui.back.hidden = true;
     ui.header.classList.remove('hasback');

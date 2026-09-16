@@ -1,10 +1,10 @@
-# Stalk That Hoe! — install
+# InstaLurk — install
 
 Chrome only (or Edge/Brave/Opera — anything Chromium). Takes about a minute.
 
 ## 1. Unzip it
 
-Unzip `stalk-that-hoe.zip` somewhere **permanent** — Documents is fine, Downloads
+Unzip `instalurk.zip` somewhere **permanent** — Documents is fine, Downloads
 is not. Chrome loads the extension from this folder every time it starts, so if
 the folder moves or gets deleted, the extension breaks.
 
@@ -17,11 +17,11 @@ You should end up with a folder containing `manifest.json`, `src/` and `icons/`.
 3. Click **Load unpacked**
 4. Select the folder you unzipped (the one with `manifest.json` in it)
 
-It should appear as **Stalk That Hoe!**
+It should appear as **InstaLurk**.
 
 ## 3. Pin it
 
-Click the puzzle-piece icon in the toolbar, then the pin next to Stalk That Hoe!
+Click the puzzle-piece icon in the toolbar, then the pin next to InstaLurk
 so it's always one click away.
 
 ## 4. Use it

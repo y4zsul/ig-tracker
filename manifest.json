@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Stalk That Hoe!",
-  "version": "6.16.0",
-  "description": "Captures Instagram follower/following lists and builds a real chronological timeline by comparing captures over time. Search and CSV export.",
+  "name": "InstaLurk",
+  "version": "7.0.0",
+  "description": "Tracks who an Instagram account starts following over time, and dates each new follow to when it was spotted. Runs entirely in your own browser.",
   "minimum_chrome_version": "114",
   "permissions": ["sidePanel", "storage", "unlimitedStorage"],
   "host_permissions": ["https://www.instagram.com/*", "https://instagram.com/*"],
@@ -11,7 +11,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Stalk That Hoe!",
+    "default_title": "InstaLurk",
     "default_icon": {
       "16": "icons/icon16.png",
       "32": "icons/icon32.png",
