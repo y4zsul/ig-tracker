@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Stalk That Hoe!
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      1.4.1
+// @version      1.5.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -576,14 +576,20 @@
 
       .fab {
         position: fixed; right: 14px;
+        /* A default only. Browser chrome sits in different places on iOS
+           Safari and Firefox Android, and Instagram's own nav moves too, so
+           rather than guess at every combination the button is draggable and
+           remembers where it was put. */
         bottom: calc(104px + env(safe-area-inset-bottom, 0px));
         z-index: 2147483000;
         width: 56px; height: 56px; border-radius: 50%; border: none;
         background: linear-gradient(135deg, #e0357f, #a34ae0);
         color: #fff; font-size: 23px;
         box-shadow: 0 6px 20px rgba(0,0,0,.3); cursor: pointer;
+        touch-action: none; /* a drag must not scroll the page underneath */
       }
       .fab:active { transform: scale(.94); }
+      .fab.dragging { opacity: .9; transform: scale(1.06); }
 
       .sheet {
         position: fixed; inset: 0; z-index: 2147483001;
@@ -1112,7 +1118,10 @@
     }
 
     setNote(
-      'Loaded without a seen receipt. Save opens the iOS share sheet — choose Save Image or Save Video to put it in Photos.',
+      'Loaded without a seen receipt. ' +
+        (canShareFiles()
+          ? 'Save opens the share sheet — choose Save Image or Save Video to put it in Photos.'
+          : 'Save downloads the file to your device.'),
       true
     );
 
@@ -1285,6 +1294,23 @@
   const blobCache = new Map();
 
   /**
+   * Whether the browser can hand a file to the OS share sheet. True on iOS
+   * Safari, generally false on Firefox Android — which is fine, because that
+   * falls back to a plain download. Only the wording needs to differ.
+   */
+  let shareFilesSupported = null;
+  function canShareFiles() {
+    if (shareFilesSupported !== null) return shareFilesSupported;
+    try {
+      const probe = new File([new Blob(['x'])], 'x.jpg', { type: 'image/jpeg' });
+      shareFilesSupported = !!(navigator.canShare && navigator.canShare({ files: [probe] }));
+    } catch (_) {
+      shareFilesSupported = false;
+    }
+    return shareFilesSupported;
+  }
+
+  /**
    * Saves a story photo or video to the device.
    *
    * The only route on iOS that reaches Photos is the native share sheet with
@@ -1321,7 +1347,7 @@
       }
 
       const file = new File([blob], name, { type: blob.type || type });
-      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      if (canShareFiles() && navigator.canShare({ files: [file] })) {
         reset('Save');
         await navigator.share({ files: [file] });
         reset('Saved', 1600);
@@ -1373,10 +1399,80 @@
 
   // --- events ----------------------------------------------------------------
 
-  ui.fab.addEventListener('click', () => {
+  // --- draggable button ------------------------------------------------------
+
+  const FAB_KEY = 'sth.mobile.fab';
+  const FAB_SIZE = 56;
+  let fabMoved = false;
+
+  function placeFab() {
+    let pos = null;
+    try {
+      pos = JSON.parse(localStorage.getItem(FAB_KEY) || 'null');
+    } catch (_) {}
+    if (!pos) return; // never dragged — leave the CSS default in place
+    // Clamp on every placement, so rotating the device or a browser chrome
+    // change cannot strand the button off-screen.
+    const m = 6;
+    const x = Math.min(Math.max(pos.x, m), Math.max(m, innerWidth - FAB_SIZE - m));
+    const y = Math.min(Math.max(pos.y, m), Math.max(m, innerHeight - FAB_SIZE - m));
+    ui.fab.style.left = `${x}px`;
+    ui.fab.style.top = `${y}px`;
+    ui.fab.style.right = 'auto';
+    ui.fab.style.bottom = 'auto';
+  }
+
+  let drag = null;
+  ui.fab.addEventListener('pointerdown', (e) => {
+    const r = ui.fab.getBoundingClientRect();
+    drag = { id: e.pointerId, dx: e.clientX - r.left, dy: e.clientY - r.top, x0: e.clientX, y0: e.clientY };
+    fabMoved = false;
+    try {
+      ui.fab.setPointerCapture(e.pointerId);
+    } catch (_) {}
+  });
+
+  ui.fab.addEventListener('pointermove', (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    // A few pixels of slop, so a normal tap is never read as a drag.
+    if (!fabMoved && Math.abs(e.clientX - drag.x0) + Math.abs(e.clientY - drag.y0) < 8) return;
+    fabMoved = true;
+    ui.fab.classList.add('dragging');
+    const m = 6;
+    const x = Math.min(Math.max(e.clientX - drag.dx, m), innerWidth - FAB_SIZE - m);
+    const y = Math.min(Math.max(e.clientY - drag.dy, m), innerHeight - FAB_SIZE - m);
+    ui.fab.style.left = `${x}px`;
+    ui.fab.style.top = `${y}px`;
+    ui.fab.style.right = 'auto';
+    ui.fab.style.bottom = 'auto';
+  });
+
+  const endDrag = () => {
+    if (!drag) return;
+    drag = null;
+    ui.fab.classList.remove('dragging');
+    if (!fabMoved) return;
+    try {
+      const r = ui.fab.getBoundingClientRect();
+      localStorage.setItem(FAB_KEY, JSON.stringify({ x: r.left, y: r.top }));
+    } catch (_) {}
+  };
+  ui.fab.addEventListener('pointerup', endDrag);
+  ui.fab.addEventListener('pointercancel', endDrag);
+
+  ui.fab.addEventListener('click', (e) => {
+    // A drag ends with a click too; that one must not open the sheet.
+    if (fabMoved) {
+      fabMoved = false;
+      e.stopPropagation();
+      return;
+    }
     ui.sheet.hidden = false;
     render();
   });
+
+  addEventListener('resize', placeFab);
+  addEventListener('orientationchange', placeFab);
   ui.close.addEventListener('click', () => {
     ui.sheet.hidden = true;
   });
@@ -1456,6 +1552,7 @@
   function mount() {
     if (!document.body || document.getElementById('sth-host')) return;
     document.body.appendChild(host);
+    placeFab();
   }
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', mount, { once: true });

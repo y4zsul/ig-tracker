@@ -92,6 +92,162 @@ there, and gets folded into the baseline silently rather than reported as new.
 If some arrivals are accounted for and some aren't, there's no way to tell which
 is which, so the whole batch is flagged **unverified** rather than guessed at.
 
+## On your phone
+
+Chrome extensions don't exist on mobile, so the phone version is a **userscript**
+— one file (`mobile/stalk-that-hoe.user.js`) that a script manager runs inside
+Instagram. Same engine, one self-contained file, no extension needed.
+
+It works because the script runs *inside* the instagram.com page, so the browser
+attaches your session itself. Nothing is uploaded and there's no account.
+
+It does four things: **My account** (who doesn't follow you back), **Start a new
+stalk**, **Monitor a user**, **Compare two accounts**, and **Watch stories
+quietly**.
+
+> Your phone data is separate from your desktop data. Nothing syncs between them.
+
+---
+
+### iPhone and iPad
+
+**Step 1 — install the script manager**
+
+App Store → search **Userscripts** (by quoid) → install. It's free and open
+source.
+✅ *Check:* a grey **Userscripts** icon is on your home screen.
+
+**Step 2 — enable it in Safari**
+
+Settings → Apps → Safari → Extensions → **Userscripts** → turn the switch on.
+(On iOS 16 and older: Settings → Safari → Extensions.)
+✅ *Check:* the switch is green.
+
+**Step 3 — give it a folder**
+
+Open the **Userscripts app**. On first run it asks you to choose a directory —
+accept the default `Userscripts` folder under *On My iPhone*, or pick your own.
+✅ *Check:* the app shows a file list instead of the "choose a directory" prompt.
+
+> The app itself is only a folder picker. Don't look for a **+** in it — the
+> editor lives in the Safari popup, and you won't need either.
+
+**Step 4 — allow it on Instagram**
+
+iOS grants site access *from the page*, not from Settings, so instagram.com
+won't be listed until you do this:
+
+- Open **instagram.com in Safari** and log in
+- Tap **аА** at the **left end of the address bar**
+- Tap **Userscripts** → choose **Always Allow on This Website**
+
+✅ *Check:* tapping **аА** → **Userscripts** again no longer asks for permission.
+
+**Step 5 — download the script**
+
+In Safari, open:
+
+```
+github.com/y4zsul/ig-tracker/blob/main/mobile/stalk-that-hoe.user.js
+```
+
+- **Long-press the "Raw" button** → **Download Linked File**
+- Tap the **⬇ downloads arrow** right of the address bar
+- Tap the **magnifying glass** next to `stalk-that-hoe.user.js` — it opens in Files
+
+✅ *Check:* you can see `stalk-that-hoe.user.js` in the Files app.
+
+**Step 6 — move it into the folder**
+
+**Long-press the file → Move** → navigate to the folder from step 3
+(`On My iPhone → Userscripts`) → **Move**.
+✅ *Check:* opening the Userscripts app now lists the file.
+
+**Step 7 — turn the script on**
+
+Back on instagram.com, tap **аА** → **Userscripts**. You should see
+**Stalk That Hoe!** listed. **If it's greyed out, tap it** — greyed means
+disabled.
+✅ *Check:* it shows the full name (not the filename) and isn't greyed.
+
+**Step 8 — reload**
+
+**Pull down to refresh** Instagram. Scripts only inject on page load.
+✅ *Check:* a pink **✌︎** button appears near the bottom-right.
+
+---
+
+### Android
+
+Easier than iOS — installing is a single tap.
+
+**Step 1 — install Firefox**
+
+Play Store → **Firefox** (Chrome on Android can't run extensions).
+✅ *Check:* Firefox opens.
+
+**Step 2 — install Violentmonkey**
+
+In Firefox, open `addons.mozilla.org/firefox/addon/violentmonkey/` → **Add to
+Firefox** → **Add**. (Tampermonkey works too.)
+✅ *Check:* Firefox menu (⋮) → **Extensions** lists Violentmonkey.
+
+**Step 3 — install the script**
+
+In Firefox, open:
+
+```
+raw.githubusercontent.com/y4zsul/ig-tracker/main/mobile/stalk-that-hoe.user.js
+```
+
+Violentmonkey intercepts it and shows an install page → tap **Install**.
+✅ *Check:* the confirmation says **Stalk That Hoe!** with a version number.
+
+**Step 4 — open Instagram**
+
+Go to **instagram.com** in Firefox and log in. Use the website, not the app.
+✅ *Check:* a pink **✌︎** button appears near the bottom-right.
+
+---
+
+### Using it
+
+Tap **✌︎** to open. **You can drag the button anywhere** — it remembers where
+you put it, which matters because browser toolbars sit in different places.
+
+| Screen | What it does |
+| --- | --- |
+| **My account** | Scan → who you follow that doesn't follow you back, plus Mutuals and Fans |
+| **Start a new stalk** | Enter a username → records who they follow now, as a baseline |
+| **Monitor a user** | Pick someone stalked → **Check now** → who they've added since, grouped by check |
+| **Compare two accounts** | Overlap between two captures. Costs no requests |
+| **Watch stories quietly** | Loads a story without sending a seen receipt. **Save story** keeps the photo or video |
+
+**Keep the tab open while scanning.** Phones suspend background tabs — switch
+apps mid-scan and it stalls. A few hundred accounts takes under a minute.
+
+**The first capture has no order.** Instagram never says when a follow happened,
+so a baseline is just a set. Only accounts appearing *after* it can be dated,
+which is what Monitor shows.
+
+### Updating the phone version
+
+**Android:** open the raw link again and Violentmonkey offers to update.
+
+**iPhone:** delete the old `stalk-that-hoe.user.js` from `On My iPhone →
+Userscripts` **first**, then repeat steps 5 and 6. Two files sharing a name will
+confuse it. Check the version in the Userscripts popup to confirm it took.
+
+### If something goes wrong
+
+| Symptom | Cause |
+| --- | --- |
+| No ✌︎ button | Not on instagram.com in the right browser, script disabled, or the page wasn't reloaded |
+| "Not logged in" | Log into Instagram in that browser and reload |
+| "Instagram is rate limiting" | Too many requests. It waits automatically — leave the tab open |
+| "Instagram wants a security check" | Clear it in the Instagram app, then retry |
+| "Instagram won't show this list" | The account is private and you don't follow them |
+
 ## Layout
 
 ```
@@ -102,7 +258,12 @@ src/interceptor.js     MAIN world: header harvest, collector, pagination
 src/bridge.js          two-way relay
 src/background.js      run state, history diffing, persistence
 src/sidepanel.{html,css,js}
+mobile/stalk-that-hoe.user.js   the phone version, one self-contained file
 ```
+
+`mobile/` is not referenced by `manifest.json` and is not in the downloadable
+zip, so it has no effect on the extension even if you load the whole repo
+unpacked.
 
 ## Requirements
 
