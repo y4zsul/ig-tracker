@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.3.0
+// @version      2.3.1
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -336,11 +336,10 @@
   async function walkList(kind, pk, expectedTotal, onProgress) {
     const pageSize = kind === 'followers' ? 25 : 200;
     const baseDelay = kind === 'followers' ? 700 : 900;
-    // A ceiling, not a target: the loop exits as soon as a pass finds nobody
-    // new, so a healthy list still finishes in two or three. Only lists that
-    // are genuinely still turning people up spend the budget, and those are
-    // exactly the ones that used to get cut off mid-climb.
-    const maxPasses = 10;
+    // A backstop, not a target. The loop exits on diminishing returns long
+    // before this; recovering the last stragglers is the job of the next
+    // check, which sees a properly different shuffle.
+    const maxPasses = 6;
 
     const union = new Map();
     let pass = 0;
@@ -417,16 +416,36 @@
       pass++;
       const marginal = lastSize < 0 ? Infinity : union.size - lastSize;
       lastSize = union.size;
-      quiet = marginal === 0 ? quiet + 1 : 0;
 
       const known = expectedTotal != null && expectedTotal > 0;
-      if (known && union.size >= expectedTotal) break;
+
+      // Re-walking has sharply diminishing returns inside one session: the
+      // ranking only shuffles a little over a few minutes, so each extra pass
+      // recovers less than the last and that tail is most of the wait. A pass
+      // that turns up one straggler out of two hundred missing is not worth
+      // another full walk. The next check sees a properly different shuffle
+      // and folds what it finds into the baseline rather than dating it.
+      // The bar scales with what a pass costs: followers is capped at 25 rows
+      // a page against 200 for following, so that walk is eight times the
+      // requests for the same list and should give up on stragglers sooner.
+      const rate = pageSize >= 100 ? 0.002 : 0.01;
+      const negligible = known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
+      quiet = marginal <= negligible ? quiet + 1 : 0;
+
+      // Match the tolerance the diffing side uses to call a capture full:
+      // deactivated accounts are counted in the reported total but never
+      // listed, so demanding an exact match burns passes chasing people
+      // Instagram will never return.
+      const tolerance = known ? Math.max(5, expectedTotal * 0.02) : 0;
+      const effectivelyComplete = known && union.size >= expectedTotal - tolerance;
+      if (effectivelyComplete) break;
+
       // One quiet pass used to be enough for an opaque cursor, on the reasoning
       // that a record-anchored cursor cannot skip anyone. Followers lists come
       // up short the same way following lists do, and an opaque cursor is not
       // evidence of being record-anchored, so a short list earns a second pass
       // whatever the cursor type.
-      const short = known && union.size < expectedTotal;
+      const short = known && !effectivelyComplete;
       if (quiet >= (short ? 2 : 1)) break;
       if (pass < maxPasses) await sleep(1500);
     }

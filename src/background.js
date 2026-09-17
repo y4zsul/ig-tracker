@@ -557,12 +557,16 @@ async function startRun(req) {
     pageSize: run.pageSize,
     delayMs: run.delayMs,
     maxUsers: MAX_USERS_PER_RUN,
-    // A ceiling, not a target. The walk exits as soon as a pass finds nobody
-    // new, so a healthy list still finishes in two or three; this budget is
-    // only spent by lists that are genuinely still turning people up, which
-    // are exactly the ones that used to get cut off mid-climb. Large pages
-    // make the extra passes cheap: 1,100 following is six requests a pass.
-    maxPasses: isBaseline ? 12 : 8,
+    // A backstop, not a target. The walk exits on diminishing returns long
+    // before this, so raising it further only lengthens the tail on the lists
+    // that are hardest to finish. Recovering the last stragglers is the job of
+    // the next check, which sees a properly different shuffle and folds what
+    // it finds into the baseline rather than dating it.
+    //
+    // Followers gets fewer: it is capped at 25 rows a page against 200 for
+    // following, so the same list costs eight times the requests and eight
+    // times the wait, and an extra pass there is minutes rather than seconds.
+    maxPasses: kind === 'followers' ? (isBaseline ? 3 : 2) : isBaseline ? 6 : 4,
   };
   if (knownId) {
     command.targetId = knownId;

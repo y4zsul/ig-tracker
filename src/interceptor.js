@@ -1187,19 +1187,43 @@
         const union = unionSet.size;
         const marginal = lastUnion < 0 ? Infinity : union - lastUnion;
         lastUnion = union;
-        quiet = marginal === 0 ? quiet + 1 : 0;
 
         const known = expectedTotal != null && expectedTotal > 0;
-        // Never loop until union === expectedTotal: that count includes
+
+        // Re-walking has sharply diminishing returns inside one session: the
+        // ranking only shuffles a little over a few minutes, so the same people
+        // stay hidden and each extra pass recovers less than the last. A pass
+        // that turns up one straggler out of two hundred missing is not worth
+        // another full walk, and that long tail is most of the wait.
+        //
+        // A check tomorrow sees a properly different shuffle and recovers far
+        // more for far less waiting, and anything it finds folds into the
+        // baseline instead of being dated as a new follow. So near-zero counts
+        // as zero, and the walk stops instead of grinding.
+        // The bar scales with what a pass costs. /followers/ is capped at 25
+        // rows a page against 200 for /following/, so a followers walk is
+        // roughly eight times the requests and eight times the wait for the
+        // same list, and it should give up on stragglers correspondingly
+        // sooner.
+        const rate = pageSize >= 100 ? 0.002 : 0.01;
+        const negligible = known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
+        quiet = marginal <= negligible ? quiet + 1 : 0;
+        // Never wait for union === expectedTotal: that count includes
         // deactivated accounts which are counted but never returned, so many
-        // targets plateau permanently below it.
-        // If the union has reached the reported count, stop immediately.
+        // targets plateau permanently below it and would walk forever.
+        //
+        // Match the tolerance the diffing side uses to call a capture full.
+        // A walk that has everything bar a rounding error is finished, and
+        // demanding an exact match is what made a clean 1,098-of-1,100 capture
+        // burn extra passes chasing people Instagram is never going to return.
+        const tolerance = known ? Math.max(5, expectedTotal * 0.02) : 0;
+        const effectivelyComplete = known && union >= expectedTotal - tolerance;
         // Otherwise be stubborn: a pass that finds nobody new is NOT proof the
         // list is whole — measured runs go 746, 766, 771, 774, 774, and two
         // identical walks have agreed on 252 of 253 while a third found the
         // straggler. Stopping at the first quiet pass is what produces phantom
         // "new follows" on the next check.
-        const short = known && union < expectedTotal;
+        const short = known && !effectivelyComplete;
         // Re-walking exists to recover people that offset paging skipped, and
         // a record-anchored cursor supposedly cannot skip anyone, so this used
         // to accept a single quiet pass on /followers/ to save the wait at 25
@@ -1210,8 +1234,7 @@
         // is record-anchored, and one quiet pass is thin proof either way, so
         // a short list now earns a second pass regardless of cursor type.
         const quietNeeded = short ? 2 : 1;
-        const done =
-          pass >= maxPasses || (known && union >= expectedTotal) || quiet >= quietNeeded;
+        const done = pass >= maxPasses || effectivelyComplete || quiet >= quietNeeded;
 
         if (!done) {
           post({
