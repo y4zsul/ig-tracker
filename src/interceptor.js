@@ -1192,10 +1192,16 @@
         // straggler. Stopping at the first quiet pass is what produces phantom
         // "new follows" on the next check.
         const short = known && union < expectedTotal;
-        // Re-walking exists to recover people that offset paging skipped. A
-        // record-anchored cursor cannot skip anyone, so a second quiet pass is
-        // pure cost — and on /followers/, at 25 a page, it is most of the wait.
-        const quietNeeded = short && !tokenCursor ? 2 : 1;
+        // Re-walking exists to recover people that offset paging skipped, and
+        // a record-anchored cursor supposedly cannot skip anyone, so this used
+        // to accept a single quiet pass on /followers/ to save the wait at 25
+        // rows a page.
+        //
+        // Reports say otherwise: followers lists come up short the same way
+        // following lists do. The cursor being opaque is not evidence that it
+        // is record-anchored, and one quiet pass is thin proof either way, so
+        // a short list now earns a second pass regardless of cursor type.
+        const quietNeeded = short ? 2 : 1;
         const done =
           pass >= maxPasses || (known && union >= expectedTotal) || quiet >= quietNeeded;
 

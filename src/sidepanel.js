@@ -1070,10 +1070,27 @@ async function onCaptureFinished(key, run) {
   if (screen === 'new' && isBaseline) {
     els.doneMsg.hidden = false;
     els.doneMsg.classList.remove('bad');
-    els.doneMsg.innerHTML =
-      `<strong>Baseline saved: ${nf.format(all.length)} accounts.</strong> ` +
-      `We'll keep an eye on them from now on. Come back to <em>Monitor a user</em> to see who they add.` +
-      `<br><span class="fine">Listed A-Z below. Instagram does not say what order these were followed in, so this list has no chronology. Only what comes next does.</span>`;
+
+    // A baseline that came up short is the single most misleading state in the
+    // app: every account it missed resurfaces on the next check looking like a
+    // brand-new follow. Saying only "saved: 900 accounts" hid that completely,
+    // so the shortfall is now stated up front, with the fix.
+    const want =
+      monData.summary.kind === 'followers'
+        ? monData.summary.reportedFollowers
+        : monData.summary.reportedFollowing;
+    const gap = want != null ? want - all.length : null;
+    const short = gap != null && gap > Math.max(5, want * 0.02);
+
+    els.doneMsg.innerHTML = short
+      ? `<strong>Baseline saved: ${nf.format(all.length)} of ${nf.format(want)}.</strong> ` +
+        `Instagram reshuffles this list while it is being read, so a walk can miss people. ` +
+        `<br><span class="fine">Run <em>Start stalk</em> on them again before relying on this. ` +
+        `Anything a later pass finds is merged in, and accounts recovered that way are folded ` +
+        `into the baseline rather than reported as new follows.</span>`
+      : `<strong>Baseline saved: ${nf.format(all.length)} accounts.</strong> ` +
+        `We'll keep an eye on them from now on. Come back to <em>Monitor a user</em> to see who they add.` +
+        `<br><span class="fine">Listed A-Z below. Instagram does not say what order these were followed in, so this list has no chronology. Only what comes next does.</span>`;
     render();
     return;
   }
