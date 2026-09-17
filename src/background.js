@@ -276,20 +276,24 @@ function ingestSnapshot(run) {
   //     listed, and without it such a list would never settle at all.
   const wasSettled = t.settled === true;
 
+  // All four are declared out here rather than inside the branch below,
+  // because the snapshot record at the end of this function stores them too.
+  // They are pure arithmetic, so computing them unconditionally costs nothing.
+  //
+  // The strongest tell that an "arrival" is really a recovered miss is that
+  // the profile's own reported count did not rise enough to account for it.
+  const curExpected = run.expectedTotal != null ? run.expectedTotal : null;
+  const prevExpected = prev ? prev.expectedTotal : null;
+  const expectedDelta =
+    prevExpected != null && curExpected != null ? curExpected - prevExpected : null;
+  // Departures free up slots, so a real arrival can hide behind one.
+  const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
+
   if (!isFirst && !wasSettled && freshPks.length) {
     // Still filling in. These are recovered misses, not news.
     absorbAll();
   } else if (wasSettled) {
-    // The baseline is trusted, so the profile's own count is the arbiter. The
-    // strongest tell that an "arrival" is really a recovered miss is that the
-    // reported following count did not rise enough to account for it.
-    const prevExpected = prev ? prev.expectedTotal : null;
-    const curExpected = run.expectedTotal != null ? run.expectedTotal : null;
-    const expectedDelta =
-      prevExpected != null && curExpected != null ? curExpected - prevExpected : null;
-    // Departures free up slots, so a real arrival can hide behind one.
-    const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
-
+    // The baseline is trusted, so the profile's own count is the arbiter.
     if (plausibleNew === 0 && freshPks.length) {
       // The count did not move, so nobody was followed. Anybody newly visible
       // was there all along.
