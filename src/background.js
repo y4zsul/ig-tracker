@@ -56,6 +56,7 @@ function ensureLoaded() {
         } else if (key.startsWith(TRACK_PREFIX) && value && value.key) {
           state.tracked.set(value.key, value);
           migrateAbsorbed(value);
+          migrateSettled(value);
         }
       }
     })().catch((err) => console.error('[igfo] restore failed', err));
@@ -85,6 +86,28 @@ function migrateAbsorbed(t) {
     pendingTracks.add(t.key);
     scheduleSave(null);
   }
+}
+
+/**
+ * Decide `settled` for watches created before it existed. Without this every
+ * existing watch would read as unsettled, hiding arrival history that people
+ * have been collecting for weeks.
+ *
+ * Settled retroactively on the same evidence the live rule uses: a capture
+ * that came back essentially complete, or two consecutive captures that agreed
+ * on the size of the list. A watch with neither genuinely does have an
+ * unreliable baseline, and is better off saying so.
+ */
+function migrateSettled(t) {
+  if (typeof t.settled === 'boolean') return;
+  const snaps = t.snapshots || [];
+  const everFull = snaps.some((s) => s.full === true);
+  const lastTwoAgree =
+    snaps.length >= 2 && snaps[snaps.length - 1].count === snaps[snaps.length - 2].count;
+  t.settled = everFull || lastTwoAgree;
+  if (t.settled) t.settledAt = snaps.length ? snaps[snaps.length - 1].at : Date.now();
+  pendingTracks.add(t.key);
+  scheduleSave(null);
 }
 
 // --- persistence -------------------------------------------------------------
@@ -219,22 +242,10 @@ function ingestSnapshot(run) {
     }
   }
 
-  // The strongest tell that an "arrival" is really a recovered miss: the
-  // profile's own following count did not rise enough to account for it.
-  // If they followed nobody new, anybody newly visible was there all along.
-  const prevExpected = prev ? prev.expectedTotal : null;
-  const curExpected = run.expectedTotal != null ? run.expectedTotal : null;
-  const expectedDelta =
-    prevExpected != null && curExpected != null ? curExpected - prevExpected : null;
-  // Departures free up slots, so a real arrival can hide behind one.
-  const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
-
   let absorbed = 0;
-  if (plausibleNew === 0 && freshPks.length) {
-    // The count did not move, so nobody was followed — every one of these was
-    // already there and simply missed by an earlier walk. They are not news.
-    // Fold them into the baseline silently rather than parading them as
-    // arrivals with a disclaimer nobody can act on.
+
+  /** Fold accounts into the baseline instead of dating them as arrivals. */
+  const absorbAll = () => {
     for (const pk of freshPks) {
       const acc = t.accounts[pk];
       if (!acc) continue;
@@ -245,17 +256,61 @@ function ingestSnapshot(run) {
       absorbed++;
     }
     arrived = 0;
-  } else if (plausibleNew != null && arrived > plausibleNew) {
-    // Some are real and some are misses, and there is no way to tell which,
-    // so the whole batch carries the caveat.
-    const reason = `only ${plausibleNew} of these are accounted for by the profile's count`;
-    for (const pk of freshPks) {
-      const acc = t.accounts[pk];
-      if (acc) {
-        acc.confirmed = false;
-        acc.confirmReason = reason;
+  };
+
+  // --- is the baseline settled? ----------------------------------------------
+  //
+  // Dating an arrival is only meaningful if the capture before it was good
+  // enough to have seen that account. Until the walk has demonstrably
+  // converged, a first sighting is far more likely to be the collector finally
+  // catching someone than a real new follow — and dating those is precisely
+  // what produced batches of "new follows" that were never new, which is the
+  // single most damaging thing this app can do.
+  //
+  // So nothing is dated until the baseline settles, on either of two
+  // independent signals:
+  //   - a capture came back essentially complete against the reported count, or
+  //   - a capture that reached the end of the list found nobody new. That is
+  //     what convergence looks like on a list which permanently plateaus below
+  //     its reported count because deactivated accounts are counted but never
+  //     listed, and without it such a list would never settle at all.
+  const wasSettled = t.settled === true;
+
+  if (!isFirst && !wasSettled && freshPks.length) {
+    // Still filling in. These are recovered misses, not news.
+    absorbAll();
+  } else if (wasSettled) {
+    // The baseline is trusted, so the profile's own count is the arbiter. The
+    // strongest tell that an "arrival" is really a recovered miss is that the
+    // reported following count did not rise enough to account for it.
+    const prevExpected = prev ? prev.expectedTotal : null;
+    const curExpected = run.expectedTotal != null ? run.expectedTotal : null;
+    const expectedDelta =
+      prevExpected != null && curExpected != null ? curExpected - prevExpected : null;
+    // Departures free up slots, so a real arrival can hide behind one.
+    const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
+
+    if (plausibleNew === 0 && freshPks.length) {
+      // The count did not move, so nobody was followed. Anybody newly visible
+      // was there all along.
+      absorbAll();
+    } else if (plausibleNew != null && arrived > plausibleNew) {
+      // Some are real and some are misses, with no way to tell which, so the
+      // whole batch carries the caveat.
+      const reason = `only ${plausibleNew} of these are accounted for by the profile's count`;
+      for (const pk of freshPks) {
+        const acc = t.accounts[pk];
+        if (acc) {
+          acc.confirmed = false;
+          acc.confirmReason = reason;
+        }
       }
     }
+  }
+
+  if (!t.settled && trustworthy && (full === true || (!isFirst && freshPks.length === 0))) {
+    t.settled = true;
+    t.settledAt = at;
   }
 
   t.snapshots.push({
@@ -317,6 +372,9 @@ function trackSummary(t) {
     targetId: t.targetId,
     username: displayName(t.targetId, t.username),
     snapshotCount: t.snapshots.length,
+    // Until this is true nothing is being dated, so the UI has to say so
+    // rather than show an empty arrivals list that looks like "no changes".
+    settled: t.settled === true,
     firstSnapshotAt: t.snapshots.length ? t.snapshots[0].at : null,
     lastSnapshotAt: t.snapshots.length ? t.snapshots[t.snapshots.length - 1].at : null,
     total: accounts.length,
@@ -499,7 +557,12 @@ async function startRun(req) {
     pageSize: run.pageSize,
     delayMs: run.delayMs,
     maxUsers: MAX_USERS_PER_RUN,
-    maxPasses: isBaseline ? 6 : 4,
+    // A ceiling, not a target. The walk exits as soon as a pass finds nobody
+    // new, so a healthy list still finishes in two or three; this budget is
+    // only spent by lists that are genuinely still turning people up, which
+    // are exactly the ones that used to get cut off mid-climb. Large pages
+    // make the extra passes cheap: 1,100 following is six requests a pass.
+    maxPasses: isBaseline ? 12 : 8,
   };
   if (knownId) {
     command.targetId = knownId;

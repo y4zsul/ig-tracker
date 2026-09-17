@@ -1023,6 +1023,7 @@
       // Per-pass, since every pass legitimately revisits the same cursors.
       let seenCursors = new Set();
       let tokenCursor = false;
+      let emptyStreak = 0;
 
       for (;;) {
         if (run.aborted) {
@@ -1121,7 +1122,14 @@
         // 197-row page still advances the offset by the full 200 — so the only
         // terminators are an absent cursor or one that stops moving.
         const next = parsed.nextCursor;
-        let endOfList = !next || users.length === 0;
+        // An empty page is NOT the end of the list. Offset paging over a list
+        // Instagram is re-ranking underneath us can hand back a window where
+        // everyone has shifted out, while the list continues well past it.
+        // Stopping on the first empty page silently truncated those walks and
+        // is a large part of why captures came up short. Only an absent cursor,
+        // or a run of empty pages, ends a pass now.
+        emptyStreak = users.length === 0 ? emptyStreak + 1 : 0;
+        let endOfList = !next || emptyStreak >= 3;
 
         if (!endOfList) {
           // /following/ returns a numeric offset ("200", "400"); /followers/
@@ -1239,6 +1247,7 @@
 
         cursor = null;
         seenCursors = new Set();
+        emptyStreak = 0;
         if (!(await sleepAbortable(2000 + Math.random() * 2000, run))) {
           post({ type: 'collect:done', runId: run.id, reason: 'aborted', pages: pageIndex, total });
           return;

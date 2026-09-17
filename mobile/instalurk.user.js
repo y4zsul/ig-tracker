@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.2.1
+// @version      2.3.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -336,7 +336,11 @@
   async function walkList(kind, pk, expectedTotal, onProgress) {
     const pageSize = kind === 'followers' ? 25 : 200;
     const baseDelay = kind === 'followers' ? 700 : 900;
-    const maxPasses = 3;
+    // A ceiling, not a target: the loop exits as soon as a pass finds nobody
+    // new, so a healthy list still finishes in two or three. Only lists that
+    // are genuinely still turning people up spend the budget, and those are
+    // exactly the ones that used to get cut off mid-climb.
+    const maxPasses = 10;
 
     const union = new Map();
     let pass = 0;
@@ -349,6 +353,7 @@
     while (pass < maxPasses) {
       let cursor = null;
       const seen = new Set();
+      let emptyStreak = 0;
 
       for (;;) {
         if (run.aborted) return { users: [...union.values()], aborted: true, reachedEnd };
@@ -390,7 +395,12 @@
         onProgress({ count: union.size, pass: pass + 1, expectedTotal });
 
         const next = json.next_max_id != null ? String(json.next_max_id) : null;
-        if (!next || !json.users.length) {
+        // An empty page is NOT the end. Offset paging over a list Instagram is
+        // re-ranking underneath us can return a window where everyone shifted
+        // out, while the list continues well past it. Stopping on the first
+        // empty page silently truncated the walk.
+        emptyStreak = json.users.length ? 0 : emptyStreak + 1;
+        if (!next || emptyStreak >= 3) {
           reachedEnd = true;
           break;
         }
@@ -411,9 +421,13 @@
 
       const known = expectedTotal != null && expectedTotal > 0;
       if (known && union.size >= expectedTotal) break;
-      // A record-anchored cursor cannot skip anyone, so one quiet pass suffices.
-      // Numeric offsets can skip, so stay stubborn while still short.
-      if (quiet >= (known && !tokenCursor ? 2 : 1)) break;
+      // One quiet pass used to be enough for an opaque cursor, on the reasoning
+      // that a record-anchored cursor cannot skip anyone. Followers lists come
+      // up short the same way following lists do, and an opaque cursor is not
+      // evidence of being record-anchored, so a short list earns a second pass
+      // whatever the cursor type.
+      const short = known && union.size < expectedTotal;
+      if (quiet >= (short ? 2 : 1)) break;
       if (pass < maxPasses) await sleep(1500);
     }
 
@@ -433,7 +447,21 @@
       const raw = localStorage.getItem(STORE_KEY);
       if (!raw) return blank();
       const d = JSON.parse(raw);
-      if (d && d.v === 2) return d;
+      if (d && d.v === 2) {
+        // Decide `settled` for watches created before it existed, on the same
+        // evidence the live rule uses: a capture that came back essentially
+        // complete, or two consecutive captures that agreed on the size of the
+        // list. Without this every existing watch would read as unsettled and
+        // hide arrival history people have already collected.
+        for (const t of Object.values(d.tracks || {})) {
+          if (typeof t.settled === 'boolean') continue;
+          const s = t.snapshots || [];
+          t.settled =
+            s.some((x) => x.full === true) ||
+            (s.length >= 2 && s[s.length - 1].count === s[s.length - 2].count);
+        }
+        return d;
+      }
       // v1 stored only the my-account lists at the top level.
       return {
         v: 2,
@@ -533,19 +561,10 @@
     const drift = expectedTotal != null ? expectedTotal - users.length : null;
     const full = drift == null ? null : Math.abs(drift) <= Math.max(5, expectedTotal * 0.02);
 
-    // The strongest tell that an "arrival" is a recovered miss: the profile's
-    // own count did not rise enough to account for it. If they followed
-    // nobody, anybody newly visible was there all along.
-    const prevExpected = prev ? prev.expectedTotal : null;
-    const expectedDelta =
-      prevExpected != null && expectedTotal != null ? expectedTotal - prevExpected : null;
-    const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
-
     let arrived = fresh.length;
     let absorbed = 0;
-    if (plausibleNew === 0 && fresh.length) {
-      // Not news. Fold them into the baseline rather than parading them as
-      // arrivals with a disclaimer nobody can act on.
+
+    const absorbAll = () => {
       for (const p of fresh) {
         const a = t.accounts[p];
         a.b = 1;
@@ -553,8 +572,36 @@
         absorbed++;
       }
       arrived = 0;
-    } else if (plausibleNew != null && arrived > plausibleNew) {
-      for (const p of fresh) t.accounts[p].c = 0;
+    };
+
+    // Nothing is dated until the baseline stops growing. Until the walk has
+    // demonstrably converged, a first sighting is far more likely to be the
+    // collector finally catching someone than a real new follow, and dating
+    // those is what produced batches of "new follows" that were never new.
+    // Settles when a capture comes back essentially complete, or when a
+    // capture that reached the end finds nobody new, which is what
+    // convergence looks like on a list that plateaus below its reported count.
+    const wasSettled = t.settled === true;
+
+    if (!isFirst && !wasSettled && fresh.length) {
+      absorbAll();
+    } else if (wasSettled) {
+      // The strongest tell that an "arrival" is a recovered miss: the profile's
+      // own count did not rise enough to account for it. If they followed
+      // nobody, anybody newly visible was there all along.
+      const prevExpected = prev ? prev.expectedTotal : null;
+      const expectedDelta =
+        prevExpected != null && expectedTotal != null ? expectedTotal - prevExpected : null;
+      const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
+
+      if (plausibleNew === 0 && fresh.length) absorbAll();
+      else if (plausibleNew != null && arrived > plausibleNew) {
+        for (const p of fresh) t.accounts[p].c = 0;
+      }
+    }
+
+    if (!t.settled && complete && (full === true || (!isFirst && fresh.length === 0))) {
+      t.settled = true;
     }
 
     t.snapshots.push({ at, count: users.length, expectedTotal, complete, full });
@@ -1063,6 +1110,21 @@
 
     const arrivals = all.filter((a) => !a.baseline);
     const baselineCount = all.length - arrivals.length;
+
+    // Nothing is dated until the baseline stops growing, so an unsettled watch
+    // must not present as "nobody new" — that reads as a finished, trustworthy
+    // state when it is the opposite.
+    if (!t.settled) {
+      const want = last ? last.expectedTotal : null;
+      setNote('', false);
+      ui.list.innerHTML =
+        `<div class="empty"><b>Still building the baseline.</b><br>` +
+        `${nf.format(all.length)}${want != null ? ' of ' + nf.format(want) : ''} collected so far. ` +
+        `Instagram reshuffles the list while it is being read, so a walk can miss people.` +
+        `<br><br>Tap <b>Check now</b> again. Anyone a later pass turns up is added to the baseline, ` +
+        `not counted as a new follow. Once two checks agree, dating starts.</div>`;
+      return;
+    }
 
     if (!arrivals.length) {
       setNote('', false);

@@ -102,6 +102,24 @@ there, and gets folded into the baseline silently rather than reported as new.
 If some arrivals are accounted for and some aren't, there's no way to tell which
 is which, so the whole batch is flagged **unverified** rather than guessed at.
 
+### Nothing is dated until the baseline settles
+
+That check only works once the baseline is trustworthy, so **no account is
+dated until the walk has demonstrably converged**. Until then every first
+sighting is folded into the baseline, because it is far more likely to be the
+collector finally catching someone than a real new follow.
+
+A watch settles on either of two signals:
+
+- a capture came back essentially complete against the reported count, or
+- a capture that reached the end of the list found nobody new — which is what
+  convergence looks like on a list that permanently plateaus below its reported
+  count, since deactivated accounts are counted but never listed.
+
+This is deliberately conservative. Dating arrivals off a baseline that was
+still filling in is what produced batches of "new follows" that were never new,
+and a delayed first date is a far smaller problem than a confidently wrong one.
+
 ## On your phone
 
 Chrome extensions don't exist on mobile, so the phone version is a **userscript**
@@ -291,9 +309,16 @@ Everything stays local. No account, no backend, no telemetry.
 ## Rate limiting
 
 Each capture is a burst of requests, and Instagram does throttle accounts that
-hammer this endpoint. Pacing is **Safe** (50/page, ~2s) by default, with Fast and
-Max available; page size matters more than delay, since requests are what gets
-counted. It stops on 401/403, a checkpoint, or a `spam` flag, and backs off
+hammer this endpoint. All three speeds request **200 rows a page**; they differ
+only in the pause between requests (Safe ~2s, Fast ~0.6s, Max none).
+
+Page size is a correctness setting, not a speed one. Every page boundary is a
+chance for Instagram to re-rank underneath the walk and hide somebody behind
+the read head, so 1,100 accounts at 50 a page gives 22 opportunities to lose
+people where 200 a page gives 6. Smaller pages also mean *more* requests, which
+is what rate limiting actually counts. Safe used to mean 50 a page, which made
+the option everyone is told to use both the most lossy and the most
+throttle-prone. It stops on 401/403, a checkpoint, or a `spam` flag, and backs off
 45s → 3m → 7m → 15m on a 429, honouring `Retry-After`. A throttled run keeps
 what it collected and can be resumed from its last offset.
 

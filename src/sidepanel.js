@@ -86,8 +86,16 @@ const ROW_H =
   parseInt(getComputedStyle(document.documentElement).getPropertyValue('--row-h'), 10) || 52;
 const OVERSCAN = 6;
 
+// Page size is a CORRECTNESS setting, not just a speed one. Every page
+// boundary is a chance for Instagram to re-rank underneath the walk and hide
+// somebody behind the read head, so 1,100 following at 50 a page gives 22
+// opportunities to lose people where 200 a page gives 6. Smaller pages also
+// mean more requests, which is what rate limiting actually counts. Safe used
+// to mean 50 and was therefore the most lossy and most throttle-prone option,
+// while being the one everybody is told to use. Safe now means large pages
+// with a long pause between them.
 const SPEEDS = {
-  safe: { pageSize: 50, delayMs: 2000 },
+  safe: { pageSize: 200, delayMs: 2000 },
   fast: { pageSize: 200, delayMs: 600 },
   max: { pageSize: 200, delayMs: 0 },
 };
@@ -755,6 +763,23 @@ function renderGroups() {
     // A finished capture with no watch behind it is recoverable — offer it
     // rather than leaving a dead end.
     showOrphans();
+    return;
+  }
+
+  // Nothing is dated until the baseline stops growing, so an unsettled watch
+  // must not present as "no changes" — that reads as a finished, trustworthy
+  // state when it is the opposite.
+  if (!s.settled) {
+    const want = s.kind === 'followers' ? s.reportedFollowers : s.reportedFollowing;
+    els.monList.innerHTML = '';
+    els.empty.hidden = false;
+    els.empty.innerHTML =
+      `<p><strong>Still building the baseline.</strong></p>` +
+      `<p class="fine">${nf.format(s.total)}${
+        want != null ? ` of ${nf.format(want)}` : ''
+      } collected so far. Instagram reshuffles the list while it is being read, so a walk can miss people.</p>` +
+      `<p class="fine">Hit <em>Check now</em> again. Anyone a later pass turns up is added to the baseline, ` +
+      `not counted as a new follow. Once two checks agree, dating starts and anything after that is genuinely new.</p>`;
     return;
   }
 
