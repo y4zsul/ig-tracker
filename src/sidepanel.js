@@ -69,6 +69,11 @@ const els = {
   alert: $('alert'),
   doneMsg: $('doneMsg'),
 
+  exportBar: $('exportBar'),
+  exportCount: $('exportCount'),
+  exportFormat: $('exportFormat'),
+  exportBtn: $('exportBtn'),
+
   ver: $('ver'),
   viewport: $('viewport'),
   spacer: $('spacer'),
@@ -159,6 +164,9 @@ function show(next) {
   els.empty.hidden = true;
 
   if (next === 'home') els.doneMsg.hidden = true;
+  // Stale until the incoming screen's renderer repopulates it; clearing first
+  // stops the bar briefly offering the previous screen's list.
+  setExportSet([]);
   render();
 }
 
@@ -210,6 +218,7 @@ function renderWindow() {
 
 function applyFilter() {
   view = all.slice().sort(byName);
+  setExportSet(view.map((u) => ({ user: u })));
   renderWindow();
 }
 
@@ -415,6 +424,7 @@ function renderSelf() {
 
 /** Shared renderer for any flat, headed list of accounts. */
 function paintList(list, label, emptyHtml) {
+  setExportSet(list.map((u) => ({ user: u })), label);
   if (!list.length) {
     els.monList.innerHTML = '';
     els.empty.hidden = false;
@@ -730,6 +740,13 @@ function renderCounts() {
 function renderGroups() {
   const groups = arrivalGroups();
   const s = monData && monData.summary;
+
+  // Arrivals carry the date of the check that first saw them; that is the one
+  // column this app can honestly put a timestamp in, so it goes in the export.
+  setExportSet(
+    groups.flatMap((g) => g.users.map((u) => ({ user: u, at: g.at }))),
+    s && s.username ? `@${s.username}` : ''
+  );
 
   if (!monData) {
     els.monList.innerHTML = '';
@@ -1269,6 +1286,266 @@ els.monDeleteBtn.addEventListener('click', async () => {
   await loadTracks();
   await loadMon();
   render();
+});
+
+// --- export ------------------------------------------------------------------
+//
+// No libraries. The repo has no build step, and a bundled spreadsheet library
+// would be larger than everything else here put together, so the .xlsx path
+// writes the OOXML parts and zips them by hand. Roughly 80 lines, versus ~900KB
+// of vendored dependency.
+
+const EXPORT_COLUMNS = ['Username', 'Full name', 'Profile URL', 'Private', 'Follows you', 'First seen'];
+
+/** Whatever list is currently painted, in the order it is shown. */
+let exportSet = { label: '', items: [] };
+
+function setExportSet(items, label) {
+  exportSet = { label: label || '', items: items || [] };
+  updateExportBar();
+}
+
+function updateExportBar() {
+  const n = exportSet.items.length;
+  els.exportBar.hidden = n === 0 || screen === 'home' || screen === 'stories';
+  els.exportCount.textContent = n ? `${nf.format(n)} rows` : '';
+}
+
+function exportRows() {
+  return exportSet.items.map(({ user: u, at }) => [
+    u.username ? `@${u.username}` : `(id ${u.pk})`,
+    u.fullName || '',
+    u.username ? `https://www.instagram.com/${u.username}/` : '',
+    u.isPrivate ? 'yes' : 'no',
+    u.followsYou === true ? 'yes' : u.followsYou === false ? 'no' : '',
+    at ? dtfFull.format(new Date(at)) : u.baseline ? 'baseline' : '',
+  ]);
+}
+
+function exportFileName() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+  const who = (exportSet.label || screen || 'list')
+    .replace(/[^a-z0-9._-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40);
+  return `instalurk-${who || 'list'}-${stamp}`;
+}
+
+function csvCell(v) {
+  let s = v == null ? '' : String(v);
+  // Excel evaluates a cell starting with = + - @ as a formula, so a crafted
+  // full name would execute on open. Prefix it out of harm's way.
+  if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function toCSV(cols, rows) {
+  const body = [cols.map(csvCell).join(','), ...rows.map((r) => r.map(csvCell).join(','))].join('\r\n');
+  // Without a BOM Excel reads UTF-8 as ANSI and mangles every accented name.
+  const bom = String.fromCharCode(0xfeff);
+  return new Blob([bom + body], { type: 'text/csv;charset=utf-8' });
+}
+
+function toJSON(cols, rows) {
+  const keys = cols.map((c) => c.toLowerCase().replace(/ (.)/g, (_, ch) => ch.toUpperCase()));
+  const out = rows.map((r) => Object.fromEntries(keys.map((k, i) => [k, r[i]])));
+  return new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+}
+
+function toTXT(cols, rows) {
+  return new Blob([rows.map((r) => r[0]).join('\r\n')], { type: 'text/plain;charset=utf-8' });
+}
+
+function xmlEscape(v) {
+  const raw = String(v == null ? '' : v);
+  let out = '';
+  for (let i = 0; i < raw.length; i++) {
+    const code = raw.charCodeAt(i);
+    // XML 1.0 allows only tab, LF and CR below 0x20. The rest have no escape
+    // at all, so they must be dropped or Excel refuses to open the file.
+    // Written as a loop on purpose: a literal \u escape in a character class
+    // does not survive every editing path intact.
+    if (code < 0x20 && code !== 9 && code !== 10 && code !== 13) continue;
+    const ch = raw[i];
+    out += ch === '&' ? '&amp;' : ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : ch;
+  }
+  return out;
+}
+
+function colRef(i) {
+  let s = '';
+  let n = i + 1;
+  while (n > 0) {
+    const m = (n - 1) % 26;
+    s = String.fromCharCode(65 + m) + s;
+    n = (n - m - 1) / 26;
+  }
+  return s;
+}
+
+function sheetXml(cols, rows) {
+  // Inline strings rather than a shared-string table: one less part to write,
+  // and the duplication costs nothing at these sizes.
+  const line = (cells, r) =>
+    `<row r="${r}">` +
+    cells
+      .map(
+        (v, i) =>
+          `<c r="${colRef(i)}${r}" t="inlineStr"><is><t xml:space="preserve">${xmlEscape(v)}</t></is></c>`
+      )
+      .join('') +
+    '</row>';
+  return (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+    '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">' +
+    '<sheetData>' +
+    line(cols, 1) +
+    rows.map((r, i) => line(r, i + 2)).join('') +
+    '</sheetData></worksheet>'
+  );
+}
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let i = 0; i < 256; i++) {
+    let c = i;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[i] = c >>> 0;
+  }
+  return t;
+})();
+
+function crc32(bytes) {
+  let c = 0xffffffff;
+  for (let i = 0; i < bytes.length; i++) c = CRC_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * Minimal ZIP writer, STORED (uncompressed) entries only. Deflating would mean
+ * CompressionStream and async plumbing to save a few hundred KB on a file
+ * nobody keeps; stored archives open fine in Excel, Numbers and LibreOffice.
+ */
+function zipStore(files) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const central = [];
+  let offset = 0;
+
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const data = enc.encode(f.data);
+    const crc = crc32(data);
+
+    const local = new Uint8Array(30 + name.length);
+    const lv = new DataView(local.buffer);
+    lv.setUint32(0, 0x04034b50, true);
+    lv.setUint16(4, 20, true);
+    lv.setUint16(6, 0x0800, true); // UTF-8 names
+    lv.setUint16(8, 0, true); // stored
+    lv.setUint16(12, 0x21, true); // 1980-01-01, so archives are reproducible
+    lv.setUint32(14, crc, true);
+    lv.setUint32(18, data.length, true);
+    lv.setUint32(22, data.length, true);
+    lv.setUint16(26, name.length, true);
+    local.set(name, 30);
+    parts.push(local, data);
+
+    const cd = new Uint8Array(46 + name.length);
+    const cv = new DataView(cd.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0x0800, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(14, 0x21, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, name.length, true);
+    cv.setUint32(42, offset, true);
+    cd.set(name, 46);
+    central.push(cd);
+
+    offset += local.length + data.length;
+  }
+
+  const cdSize = central.reduce((n, c) => n + c.length, 0);
+  const end = new Uint8Array(22);
+  const ev = new DataView(end.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, central.length, true);
+  ev.setUint16(10, central.length, true);
+  ev.setUint32(12, cdSize, true);
+  ev.setUint32(16, offset, true);
+
+  return new Blob([...parts, ...central, end], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+}
+
+function toXLSX(cols, rows) {
+  const ns = 'http://schemas.openxmlformats.org/';
+  return zipStore([
+    {
+      name: '[Content_Types].xml',
+      data:
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        `<Types xmlns="${ns}package/2006/content-types">` +
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
+        '<Default Extension="xml" ContentType="application/xml"/>' +
+        '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>' +
+        '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>' +
+        '</Types>',
+    },
+    {
+      name: '_rels/.rels',
+      data:
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        `<Relationships xmlns="${ns}package/2006/relationships">` +
+        `<Relationship Id="rId1" Type="${ns}officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>` +
+        '</Relationships>',
+    },
+    {
+      name: 'xl/workbook.xml',
+      data:
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        `<workbook xmlns="${ns}spreadsheetml/2006/main" xmlns:r="${ns}officeDocument/2006/relationships">` +
+        '<sheets><sheet name="InstaLurk" sheetId="1" r:id="rId1"/></sheets></workbook>',
+    },
+    {
+      name: 'xl/_rels/workbook.xml.rels',
+      data:
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
+        `<Relationships xmlns="${ns}package/2006/relationships">` +
+        `<Relationship Id="rId1" Type="${ns}officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>` +
+        '</Relationships>',
+    },
+    { name: 'xl/worksheets/sheet1.xml', data: sheetXml(cols, rows) },
+  ]);
+}
+
+function saveBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+
+els.exportBtn.addEventListener('click', () => {
+  const rows = exportRows();
+  if (!rows.length) return;
+  const base = exportFileName();
+  const fmt = els.exportFormat.value;
+  const build =
+    fmt === 'csv' ? toCSV : fmt === 'json' ? toJSON : fmt === 'txt' ? toTXT : toXLSX;
+  saveBlob(build(EXPORT_COLUMNS, rows), `${base}.${fmt}`);
 });
 
 try {

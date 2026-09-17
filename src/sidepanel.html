@@ -179,6 +179,20 @@
       <div id="doneMsg" class="done" hidden></div>
     </div>
 
+    <!-- ── export ───────────────────────────────────────────────────────── -->
+    <div id="exportBar" class="bar export" hidden>
+      <div class="row">
+        <span id="exportCount" class="scanlabel"></span>
+        <select id="exportFormat" class="grow" aria-label="Export format">
+          <option value="xlsx">Excel (.xlsx)</option>
+          <option value="csv">CSV (.csv)</option>
+          <option value="json">JSON (.json)</option>
+          <option value="txt">Usernames (.txt)</option>
+        </select>
+        <button id="exportBtn" class="primary">Export</button>
+      </div>
+    </div>
+
     <!-- ── results: flat alphabetical list (virtualised) ────────────────── -->
     <div id="viewport" class="viewport" tabindex="0" hidden>
       <div id="spacer" class="spacer"><div id="rows" class="rows"></div></div>

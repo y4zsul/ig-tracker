@@ -613,6 +613,25 @@ button.armed:hover {
   }
 }
 
+/* --- export -------------------------------------------------------------- */
+
+.export {
+  padding: 10px 12px;
+}
+
+.export .scanlabel {
+  min-width: 0;
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.export select {
+  min-width: 0;
+}
+
 /* --- lists --------------------------------------------------------------- */
 
 /* The results list is its own pane. Slightly more opaque than the control
