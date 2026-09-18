@@ -36,6 +36,39 @@ The first capture is a baseline: it records who they follow right now, listed
 A–Z. Come back later, choose **Monitor a user**, and hit **Check now** — anyone
 they've added since shows up, dated to when you checked.
 
+## Updating
+
+**Unzip the new version over the folder you already have.** That's the whole
+trick, and getting it wrong is the one way to lose your saved watches.
+
+1. Download the new `instalurk.zip`
+2. Unzip it **into your existing folder**, overwriting when Windows or macOS
+   asks
+3. Go to `chrome://extensions` and click the **reload ↻** on the InstaLurk card
+4. That's it. Every watch, baseline and date is still there
+
+**Why the folder matters.** Chrome ties your saved data to the extension, and
+for an extension loaded this way it works out which extension you mean from the
+folder's location on disk. Same folder, same extension, same data. A different
+folder looks like a completely different extension to Chrome, and it starts
+empty.
+
+So these three will wipe everything, and there's no undo:
+
+- Unzipping to a new folder — `instalurk (2)`, or leaving it in Downloads — and
+  loading *that*
+- Moving or renaming the folder afterwards
+- Clicking **Remove** and then **Load unpacked** again
+
+If you're unsure it worked, the version number is at the bottom of the home
+screen. It should match the release you just downloaded.
+
+**Worth re-running your watches after an update.** Captures have got
+considerably better at not missing people, and an old baseline was built by the
+older, leakier version. Open **Start a new stalk** on anyone you're already
+watching and run it again — anything the better capture turns up gets folded
+into the baseline rather than reported as a pile of new follows.
+
 ## Things worth knowing
 
 **The first capture takes a while.** It walks the whole list several times over,
