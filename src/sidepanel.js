@@ -771,15 +771,25 @@ function renderGroups() {
   // state when it is the opposite.
   if (!s.settled) {
     const want = s.kind === 'followers' ? s.reportedFollowers : s.reportedFollowing;
+    // Same distinction as the capture message: a list Instagram refuses to
+    // page through will never settle, and telling someone to keep checking
+    // would leave them doing it forever.
+    const refused = want != null && want > 1000 && s.total < want * 0.2;
     els.monList.innerHTML = '';
     els.empty.hidden = false;
-    els.empty.innerHTML =
-      `<p><strong>Still building the baseline.</strong></p>` +
-      `<p class="fine">${nf.format(s.total)}${
-        want != null ? ` of ${nf.format(want)}` : ''
-      } collected so far. Instagram reshuffles the list while it is being read, so a walk can miss people.</p>` +
-      `<p class="fine">Hit <em>Check now</em> again. Anyone a later pass turns up is added to the baseline, ` +
-      `not counted as a new follow. Once two checks agree, dating starts and anything after that is genuinely new.</p>`;
+    els.empty.innerHTML = refused
+      ? `<p><strong>Instagram will not serve this whole list.</strong></p>` +
+        `<p class="fine">Only ${nf.format(s.total)} of ${nf.format(want)} can be reached. ` +
+        `Instagram stops handing out pages on lists this size, so this watch cannot be completed ` +
+        `and nothing here can be dated.</p>` +
+        `<p class="fine">Watch their <em>following</em> list instead. It is usually a normal size and ` +
+        `captures fine, even on an account with millions of followers.</p>`
+      : `<p><strong>Still building the baseline.</strong></p>` +
+        `<p class="fine">${nf.format(s.total)}${
+          want != null ? ` of ${nf.format(want)}` : ''
+        } collected so far. Instagram reshuffles the list while it is being read, so a walk can miss people.</p>` +
+        `<p class="fine">Hit <em>Check now</em> again. Anyone a later pass turns up is added to the baseline, ` +
+        `not counted as a new follow. Once two checks agree, dating starts and anything after that is genuinely new.</p>`;
     return;
   }
 
@@ -1106,8 +1116,20 @@ async function onCaptureFinished(key, run) {
         : monData.summary.reportedFollowing;
     const gap = want != null ? want - all.length : null;
     const short = gap != null && gap > Math.max(5, want * 0.02);
+    // A capture that got a tiny fraction is a different problem from one that
+    // came up a little short, and it needs the opposite advice. Instagram will
+    // not enumerate a very large follower list at all: it serves a page or two
+    // and stops handing back a cursor. Telling someone to run it again would
+    // waste their time, because it will stop in the same place every time.
+    const refused = want != null && want > 1000 && all.length < want * 0.2;
 
-    els.doneMsg.innerHTML = short
+    els.doneMsg.innerHTML = refused
+      ? `<strong>Instagram would only serve ${nf.format(all.length)} of ${nf.format(want)}.</strong> ` +
+        `It stops handing out pages on lists this size, so the rest cannot be reached by ` +
+        `anything running in your browser. Running it again will stop in the same place.` +
+        `<br><span class="fine">Their <em>following</em> list is usually a normal size and captures fine, ` +
+        `even on an account with millions of followers. That is the list worth watching anyway.</span>`
+      : short
       ? `<strong>Baseline saved: ${nf.format(all.length)} of ${nf.format(want)}.</strong> ` +
         `Instagram reshuffles this list while it is being read, so a walk can miss people. ` +
         `<br><span class="fine">Run <em>Start stalk</em> on them again before relying on this. ` +
