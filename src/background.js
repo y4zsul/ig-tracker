@@ -827,7 +827,12 @@ function onCollectError(p) {
   // the snapshot is marked incomplete, so removals are not inferred from it
   // and the next check's arrivals stay flagged. Dropping it entirely left the
   // user with rows on screen but no watch at all.
-  ingestSnapshot(run);
+  //
+  // One that collected NOTHING is different. There is nothing to fold in, and
+  // ingesting it only files an empty snapshot that later checks then diff
+  // against — so a check that failed before it read a single page would leave
+  // a zero in the watch's history as if the account had emptied.
+  if (run.users.length) ingestSnapshot(run);
   scheduleSave(run.id);
   updateBadge();
   pushState();

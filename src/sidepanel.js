@@ -892,8 +892,12 @@ function renderControls() {
 
   const alerts = [];
   if (active && active.warning) alerts.push(active.warning);
-  // Not when the completion panel is already showing the same message.
-  if (shown && shown.error && screen === 'new' && els.doneMsg.hidden) alerts.push(shown.error);
+  // Errors used to show on the capture screen only, so a Check now that failed
+  // on the Monitor screen said nothing at all: the scan appeared to start, and
+  // then everything just went quiet. A failure has to be visible wherever it
+  // was triggered from.
+  const errScreen = screen === 'new' || screen === 'mon';
+  if (shown && shown.error && errScreen && els.doneMsg.hidden) alerts.push(shown.error);
   els.alert.hidden = alerts.length === 0;
   if (alerts.length) els.alert.textContent = alerts.join(' ');
 }

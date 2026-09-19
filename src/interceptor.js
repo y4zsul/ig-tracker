@@ -1172,8 +1172,24 @@
           // can return an opaque token. Demanding a number here killed the
           // followers walk after one page. Accept any cursor, and only require
           // that it actually moves and has not been seen before this pass.
-          const offsetLike = /^\d+$/.test(String(next)) && /^\d*$/.test(String(cursor || ''));
           const curOff = Number(cursor || 0);
+          // A cursor being all digits does NOT make it a positional offset.
+          // /followers/ hands back opaque tokens, and some of them are long
+          // runs of digits — sliding one of those means sending Instagram a
+          // cursor it never issued, which it rejects, which ends the capture.
+          //
+          // What makes an offset an offset is that it is a row position: it
+          // advances by at most the page size, because that is how many rows
+          // were just asked for. An opaque token jumps by an arbitrary amount.
+          // That is the test, not the spelling.
+          const nextNum = Number(next);
+          const step = nextNum - curOff;
+          const offsetLike =
+            /^\d+$/.test(String(next)) &&
+            /^\d*$/.test(String(cursor || '')) &&
+            Number.isSafeInteger(nextNum) &&
+            step > 0 &&
+            step <= pageSize;
           let advanceTo = next;
 
           if (offsetLike && !slidingOff) {
@@ -1187,8 +1203,8 @@
             // Half-stepping once at the top halves that blind spot for the cost
             // of one extra request per pass.
             const stride = strideFor(pass);
-            const step = cursor == null ? Math.max(1, Math.round(stride / 2)) : stride;
-            advanceTo = String(Math.min(Math.max(curOff + 1, curOff + step), Number(next)));
+            const advance = cursor == null ? Math.max(1, Math.round(stride / 2)) : stride;
+            advanceTo = String(Math.min(Math.max(curOff + 1, curOff + advance), nextNum));
 
             // Sliding assumes the offset means what it says. If Instagram ever
             // ignores an offset it did not itself hand out, it answers with the

@@ -1,7 +1,7 @@
-// ==UserScript==
+﻿// ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.4.0
+// @version      2.4.1
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -13,7 +13,7 @@
 // NOTE ON INJECTION CONTEXT
 // `@inject-into page` is deliberately NOT set. Managers implement page-context
 // injection by appending a <script> element, and instagram.com sends a strict
-// script-src CSP that blocks exactly that — silently, with no error the user
+// script-src CSP that blocks exactly that â€” silently, with no error the user
 // can see. Left unset, the manager picks a context that works. (Confirmed on a
 // device: with `page` set, nothing ran at all.)
 //
@@ -29,9 +29,9 @@
  * arrival/absorption rules need applying to ../src/ as well.
  *
  * Three things it does:
- *   1. My account — who you follow that doesn't follow you back.
- *   2. New stalk  — baseline capture of anyone's following list.
- *   3. Monitor    — who they have added since, dated to when you checked.
+ *   1. My account â€” who you follow that doesn't follow you back.
+ *   2. New stalk  â€” baseline capture of anyone's following list.
+ *   3. Monitor    â€” who they have added since, dated to when you checked.
  *
  * Instagram publishes no follow timestamps and serves these lists in ranked
  * order, so a single capture is NEVER chronological. Chronology only comes
@@ -227,8 +227,8 @@
 
   /**
    * Handle -> pk. web_profile_info answers 429 for every logged-in session, so
-   * topsearch is the working route. It is FUZZY — a query for "jane" happily
-   * returns "janedoe123" — so only an exact username match counts.
+   * topsearch is the working route. It is FUZZY â€” a query for "jane" happily
+   * returns "janedoe123" â€” so only an exact username match counts.
    */
   async function resolveTarget(input) {
     const raw = String(input || '').replace(/^@/, '').trim();
@@ -272,7 +272,7 @@
   // Viewing a story and MARKING IT SEEN are two different requests. The media
   // arrives from the reels endpoint; the read receipt is a separate
   // /api/v1/media/seen/ POST the app sends afterwards. This fetches the reel
-  // and never sends that POST — there is no "anonymous" flag, just an omitted
+  // and never sends that POST â€” there is no "anonymous" flag, just an omitted
   // request. Nothing here may ever post to that endpoint.
 
   function bestUrl(list) {
@@ -330,7 +330,7 @@
    * Pages a friendships list and unions repeated passes.
    *
    * next_max_id is a positional offset on /following/ but an opaque token on
-   * /followers/, so nothing assumes a format — the cursor only has to change
+   * /followers/, so nothing assumes a format â€” the cursor only has to change
    * and not repeat. A SHORT page is normal and must not end the walk.
    */
   async function walkList(kind, pk, expectedTotal, onProgress) {
@@ -344,8 +344,8 @@
     // --- overlapping windows ----------------------------------------------
     //
     // /following/ pages by POSITIONAL OFFSET over a ranking Instagram
-    // recomputes for every request. Walking it with back-to-back windows —
-    // [0,200), [200,400) — loses people structurally: an account at position
+    // recomputes for every request. Walking it with back-to-back windows â€”
+    // [0,200), [200,400) â€” loses people structurally: an account at position
     // 250 when the first window is served, which drifts to 150 before the
     // second request goes out, was behind the boundary when it passed and in
     // front of it afterwards, so it is never returned. Re-walking cannot fix
@@ -427,8 +427,20 @@
           reachedEnd = true;
           break;
         }
-        const offsetLike = /^\d+$/.test(next) && /^\d*$/.test(String(cursor || ''));
         const curOff = Number(cursor || 0);
+        // All digits does NOT mean positional offset. /followers/ hands back
+        // opaque tokens, some of them long runs of digits, and sliding one of
+        // those sends Instagram a cursor it never issued. A real offset is a
+        // row position, so it advances by at most the page size just asked
+        // for; an opaque token jumps by an arbitrary amount. That is the test.
+        const nextNum = Number(next);
+        const jump = nextNum - curOff;
+        const offsetLike =
+          /^\d+$/.test(next) &&
+          /^\d*$/.test(String(cursor || '')) &&
+          Number.isSafeInteger(nextNum) &&
+          jump > 0 &&
+          jump <= pageSize;
         let advanceTo = next;
 
         if (offsetLike && !slidingOff) {
@@ -438,8 +450,8 @@
           // except the first `stride` of them, because there is no earlier
           // window to overlap with, and those are the most recent follows.
           const stride = strideFor(pass);
-          const step = cursor == null ? Math.max(1, Math.round(stride / 2)) : stride;
-          advanceTo = String(Math.min(Math.max(curOff + 1, curOff + step), Number(next)));
+          const advance = cursor == null ? Math.max(1, Math.round(stride / 2)) : stride;
+          advanceTo = String(Math.min(Math.max(curOff + 1, curOff + advance), nextNum));
 
           // If Instagram ever ignores an offset it did not itself hand out it
           // answers with the window it wanted to send, so the page comes back a
@@ -498,7 +510,7 @@
       quiet = marginal <= negligible ? quiet + 1 : 0;
 
       // This used to sit at 2%, matching the tolerance the diffing side uses to
-      // call a capture full — which quietly made 2% a TARGET, so a 1,100-follow
+      // call a capture full â€” which quietly made 2% a TARGET, so a 1,100-follow
       // list reliably finished twenty people short and handed those twenty to
       // the next check as "new". Deactivated accounts are counted in the
       // reported total and never listed, so some slack is unavoidable, but half
@@ -507,7 +519,7 @@
       // Reaching the reported count is the only self-evident finish. Short of
       // it, a near-complete FIRST pass is one look at a list that moves while
       // you read it, so anything inside the tolerance still earns a second
-      // pass — and that pass is where the last handful comes from.
+      // pass â€” and that pass is where the last handful comes from.
       const tolerance = known ? Math.max(1, expectedTotal * 0.005) : 0;
       const effectivelyComplete =
         known && union.size >= expectedTotal - (pass >= 2 ? tolerance : 0);
@@ -656,7 +668,7 @@
     const drift = expectedTotal != null ? expectedTotal - users.length : null;
     // Half a per cent, not two. Two per cent of a 1,100-follow list is
     // twenty-two people, and calling a capture that missed twenty-two people
-    // "full" settles the baseline on it — which dates those twenty-two as new
+    // "full" settles the baseline on it â€” which dates those twenty-two as new
     // follows the next time they turn up. Must stay in step with the walk's own
     // tolerance in walkList().
     const full = drift == null ? null : Math.abs(drift) <= Math.max(1, expectedTotal * 0.005);
@@ -698,7 +710,7 @@
       else if (plausibleNew != null && arrived > plausibleNew) {
         // Some are real and some are recovered misses, with no way to tell
         // which. When most of the batch cannot be real, dating it is the worse
-        // error by a wide margin — fifty rows stamped with today, of which at
+        // error by a wide margin â€” fifty rows stamped with today, of which at
         // most three happened today. Losing three real dates beats inventing
         // forty-seven, so a majority-recovery batch goes into the baseline.
         if (plausibleNew * 2 < arrived) absorbAll();
@@ -994,13 +1006,13 @@
       .story-acts button:active { filter: brightness(.92); }
     </style>
 
-    <button class="fab" aria-label="Open InstaLurk">👀</button>
+    <button class="fab" aria-label="Open InstaLurk">ðŸ‘€</button>
 
     <div class="sheet" hidden>
-      <button class="x">✕</button>
-      <button class="bk" hidden>‹</button>
+      <button class="x">âœ•</button>
+      <button class="bk" hidden>â€¹</button>
       <header>
-        <h1 id="title">Let's lurk 👀</h1>
+        <h1 id="title">Let's lurk ðŸ‘€</h1>
         <div class="sub" id="sub"></div>
       </header>
       <div id="controls"></div>
@@ -1060,7 +1072,7 @@
   // --- views -----------------------------------------------------------------
 
   function renderHome() {
-    ui.title.textContent = "Let's lurk 👀";
+    ui.title.textContent = "Let's lurk ðŸ‘€";
     ui.sub.textContent = quotaHit ? 'Storage is full. Delete a watch to save more.' : '';
     ui.back.hidden = true;
     ui.header.classList.remove('hasback');
@@ -1071,7 +1083,7 @@
         <button class="big p" data-go="self"><span class="lab"><b>My account</b><em>Who doesn't follow you back</em></span></button>
         <button class="big" data-go="stalk"><span class="lab"><b>Start a new stalk</b><em>Record who they follow now, to monitor later</em></span></button>
         <button class="big" data-go="monitor"><span class="lab"><b>Monitor a user</b><em>${
-          watching ? `See who they've added · ${watching} watched` : 'Nothing watched yet'
+          watching ? `See who they've added Â· ${watching} watched` : 'Nothing watched yet'
         }</em></span></button>
         <button class="big" data-go="compare"><span class="lab"><b>Compare two accounts</b><em>Who they both follow</em></span></button>
         <button class="big" data-go="stories"><span class="lab"><b>Watch stories quietly</b><em>No seen receipt sent</em></span></button>
@@ -1086,7 +1098,7 @@
     ui.header.classList.add('hasback');
     const s = data.self;
     ui.sub.textContent = s.info
-      ? `@${s.info.username || '…'} · ${nf.format(s.info.followers ?? 0)} followers · ${nf.format(
+      ? `@${s.info.username || 'â€¦'} Â· ${nf.format(s.info.followers ?? 0)} followers Â· ${nf.format(
           s.info.following ?? 0
         )} following`
       : 'Tap Scan to start.';
@@ -1199,26 +1211,26 @@
           (k) =>
             `<option value="${esc(k)}" ${k === monKey ? 'selected' : ''}>@${esc(
               data.tracks[k].username || data.tracks[k].pk
-            )} · ${data.tracks[k].kind}</option>`
+            )} Â· ${data.tracks[k].kind}</option>`
         )
         .join('')}</select></div>
       <div class="pad rowf">
         <button class="act" id="check">Check now</button>
         <button class="act ghost" id="stop" hidden>Stop</button>
-        <button class="act ghost" id="del" style="flex:0 0 auto;padding:13px 16px">✕</button>
+        <button class="act ghost" id="del" style="flex:0 0 auto;padding:13px 16px">âœ•</button>
       </div>`;
 
     const last = t.snapshots[t.snapshots.length - 1];
     const all = members(t);
-    ui.sub.textContent = `${nf.format(all.length)} tracked · ${t.snapshots.length} check${
+    ui.sub.textContent = `${nf.format(all.length)} tracked Â· ${t.snapshots.length} check${
       t.snapshots.length === 1 ? '' : 's'
-    } · since ${dtShort.format(new Date(t.snapshots[0].at))}`;
+    } Â· since ${dtShort.format(new Date(t.snapshots[0].at))}`;
 
     const arrivals = all.filter((a) => !a.baseline);
     const baselineCount = all.length - arrivals.length;
 
     // Nothing is dated until the baseline stops growing, so an unsettled watch
-    // must not present as "nobody new" — that reads as a finished, trustworthy
+    // must not present as "nobody new" â€” that reads as a finished, trustworthy
     // state when it is the opposite.
     if (!t.settled) {
       const want = last ? last.expectedTotal : null;
@@ -1275,7 +1287,7 @@
 
   /**
    * How complete a track is, judged on the ACCUMULATED membership across every
-   * capture rather than the last run alone — captures union into one record,
+   * capture rather than the last run alone â€” captures union into one record,
    * so a track can hold more than any single run collected.
    */
   function quality(t) {
@@ -1311,7 +1323,7 @@
           (k) =>
             `<option value="${esc(k)}" ${k === sel ? 'selected' : ''}>@${esc(
               data.tracks[k].username || data.tracks[k].pk
-            )} · ${data.tracks[k].kind}</option>`
+            )} Â· ${data.tracks[k].kind}</option>`
         )
         .join('');
 
@@ -1347,7 +1359,7 @@
     if (ta.kind !== tb.kind) {
       setNote(`You're comparing a ${ta.kind} list against a ${tb.kind} list.`, true);
     } else if (!qa.ok || !qb.ok) {
-      // Only omission is possible here — everyone shown really is in both.
+      // Only omission is possible here â€” everyone shown really is in both.
       setNote(
         `At least this many. A capture came up short, so a few may be missing. ` +
           `@${ta.username} ${qa.text}, @${tb.username} ${qb.text}. Re-check them from Monitor.`,
@@ -1434,7 +1446,7 @@
         }`;
         // A plain link, not a scripted download. `download` is ignored for
         // cross-origin URLs, but the link still opens the raw media, where
-        // iOS offers Add to Photos / Save to Files — and long-pressing the
+        // iOS offers Add to Photos / Save to Files â€” and long-pressing the
         // link itself offers Download Linked File.
         const acts =
           `<div class="story-acts">` +
@@ -1446,7 +1458,7 @@
         return (
           `<div class="story"><div class="story-head">` +
           `<span>${i + 1} of ${stories.items.length}</span>` +
-          `<span>${esc(when)}${it.isVideo ? ' · video' : ''}</span></div>${media}${acts}</div>`
+          `<span>${esc(when)}${it.isVideo ? ' Â· video' : ''}</span></div>${media}${acts}</div>`
         );
       })
       .join('');
@@ -1485,7 +1497,7 @@
     }
     ui.list.innerHTML = `<div class="empty">Read <b>${nf.format(p.count)}</b>${
       p.expectedTotal ? ` of ${nf.format(p.expectedTotal)}` : ''
-    }…<br>pass ${p.pass}<br><br>Keep this tab open.</div>`;
+    }â€¦<br>pass ${p.pass}<br><br>Keep this tab open.</div>`;
   }
 
   async function scanSelf(kind) {
@@ -1513,7 +1525,7 @@
   async function startStalk(input) {
     busy(true);
     setNote('', false);
-    ui.list.innerHTML = '<div class="empty">Looking them up…</div>';
+    ui.list.innerHTML = '<div class="empty">Looking them upâ€¦</div>';
     try {
       const t = await resolveTarget(input);
       const expected = t.info && t.info.following;
@@ -1578,7 +1590,7 @@
 
   /**
    * Whether the browser can hand a file to the OS share sheet. True on iOS
-   * Safari, generally false on Firefox Android — which is fine, because that
+   * Safari, generally false on Firefox Android â€” which is fine, because that
    * falls back to a plain download. Only the wording needs to differ.
    */
   let shareFilesSupported = null;
@@ -1597,7 +1609,7 @@
    * Saves a story photo or video to the device.
    *
    * The only route on iOS that reaches Photos is the native share sheet with
-   * the file attached — `<a download>` is ignored cross-origin, and opening the
+   * the file attached â€” `<a download>` is ignored cross-origin, and opening the
    * raw URL just plays the video with no way to keep it.
    *
    * navigator.share() must be called inside a user gesture, and awaiting the
@@ -1620,7 +1632,7 @@
     try {
       let blob = blobCache.get(url);
       if (!blob) {
-        reset('Fetching…');
+        reset('Fetchingâ€¦');
         // Signed CDN URLs need no cookies, and omitting them avoids a
         // credentialed cross-origin request being rejected outright.
         const res = await nativeFetch(url, { credentials: 'omit' });
@@ -1663,7 +1675,7 @@
   async function loadStory(input) {
     busy(true);
     setNote('', false);
-    ui.list.innerHTML = '<div class="empty">Looking them up…</div>';
+    ui.list.innerHTML = '<div class="empty">Looking them upâ€¦</div>';
     try {
       const t = await resolveTarget(input);
       const json = await apiGet(`/api/v1/feed/reels_media/?reel_ids=${encodeURIComponent(t.pk)}`);
@@ -1693,7 +1705,7 @@
     try {
       pos = JSON.parse(localStorage.getItem(FAB_KEY) || 'null');
     } catch (_) {}
-    if (!pos) return; // never dragged — leave the CSS default in place
+    if (!pos) return; // never dragged â€” leave the CSS default in place
     // Clamp on every placement, so rotating the device or a browser chrome
     // change cannot strand the button off-screen.
     const m = 6;
@@ -1804,7 +1816,7 @@
       e.target.textContent = 'Sure?';
       setTimeout(() => {
         delete e.target.dataset.armed;
-        e.target.textContent = '✕';
+        e.target.textContent = 'âœ•';
       }, 3000);
     }
   });
@@ -1825,7 +1837,7 @@
    * Instagram binds single letters to page shortcuts, and such handlers decide
    * "is the user typing?" by looking at document.activeElement. Shadow DOM
    * retargets that to the host element, so the page sees focus on a plain div,
-   * treats the keypress as a shortcut and calls preventDefault() — which ate
+   * treats the keypress as a shortcut and calls preventDefault() â€” which ate
    * specific letters as they were typed into our inputs.
    *
    * stopPropagation does not affect other listeners on this same node, so the
