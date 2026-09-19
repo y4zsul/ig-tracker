@@ -100,6 +100,11 @@ window.fetch = async function (url) {
     else return reply(JSON.stringify({ status: 'fail', message: 'invalid max_id' }));
   } else if (server.ignoreOffset) {
     offset = raw == null ? 0 : server.tokens[raw] != null ? server.tokens[raw] : 0;
+  } else if (server.cycleAt) {
+    // Pathological: hands out a fresh token every time but never advances past
+    // `cycleAt`, so nothing ever repeats exactly and the walk would spin
+    // forever on cursor identity alone.
+    offset = raw == null ? 0 : Math.min(server.tokens[raw] || 0, server.cycleAt);
   } else if (server.tokenCursor) {
     offset = raw == null ? 0 : server.tokens[raw] || 0;
   } else {
@@ -113,10 +118,15 @@ window.fetch = async function (url) {
   const payload = { users: slice, status: 'ok' };
   if (!atEnd) {
     if (server.bigToken) {
-      const tok = String(17841400000000000 + server.seq++ * 7919);
+      // Deliberately NOT ascending. These are opaque tokens that merely look
+      // numeric, and nothing says consecutive ones get larger. An earlier
+      // version of this mock emitted them in ascending order, which is exactly
+      // why a bug that ended the followers walk whenever a token parsed
+      // smaller than the last one went unnoticed here and shipped.
+      const tok = String(17841400000000000 + Math.floor(rnd() * 1e12));
       server.tokens[tok] = offset + count;
       payload.next_max_id = tok;
-    } else if (server.tokenCursor || server.ignoreOffset) {
+    } else if (server.tokenCursor || server.ignoreOffset || server.cycleAt) {
       const tok = 'TKN' + server.seq++;
       server.tokens[tok] = offset + count;
       payload.next_max_id = tok;

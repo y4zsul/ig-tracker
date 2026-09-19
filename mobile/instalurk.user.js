@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.5.0
+// @version      2.5.1
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -402,7 +402,9 @@
     while (pass < maxPasses) {
       let cursor = null;
       const seen = new Set();
+      const passSeen = new Set();
       let emptyStreak = 0;
+      let stagnantPages = 0;
       let prevPagePks = null;
       let stallStreak = 0;
 
@@ -440,13 +442,20 @@
         if (!json || !Array.isArray(json.users)) throw new Halt('Unexpected response shape.', 'parse');
 
         let newHere = 0;
+        const seenBefore = passSeen.size;
         for (const raw of json.users) {
           const u = shapeUser(raw);
-          if (u.pk && !union.has(u.pk)) {
+          if (!u.pk) continue;
+          passSeen.add(u.pk);
+          if (!union.has(u.pk)) {
             union.set(u.pk, u);
             if (headMode && !knownPks.has(u.pk)) newHere++;
           }
         }
+        // A page showing nobody this pass has not already seen is the shape a
+        // cycling cursor makes. Counted per pass, not against the cross-pass
+        // union, because a re-walk legitimately re-reads known people.
+        stagnantPages = passSeen.size > seenBefore ? 0 : stagnantPages + 1;
         onProgress({ count: union.size, pass: pass + 1, expectedTotal, head: headMode });
 
         if (headMode) {
@@ -484,7 +493,7 @@
         // out, while the list continues well past it. Stopping on the first
         // empty page silently truncated the walk.
         emptyStreak = json.users.length ? 0 : emptyStreak + 1;
-        if (!next || emptyStreak >= 3) {
+        if (!next || emptyStreak >= 3 || stagnantPages >= 5) {
           reachedEnd = true;
           // Ran out of list, so this is a whole walk however it started.
           headMode = false;
@@ -536,9 +545,15 @@
           tokenCursor = true;
         }
 
+        // Exact repeat is the only cursor test that holds for both endpoints.
+        // There used to be an ordering test too - if the next cursor parsed as
+        // a number no larger than the current one, end the pass - which is
+        // meaningless for /followers/, whose cursors are opaque tokens that
+        // merely happen to be long runs of digits. Two tokens have no order, so
+        // one that parsed smaller than the last ended the walk on the spot at a
+        // different random point every pass. `stagnantPages` above is the
+        // format-agnostic backstop for a cursor that cycles without repeating.
         if (advanceTo === cursor || seen.has(advanceTo)) break;
-        const bothNumeric = Number.isFinite(Number(advanceTo)) && Number.isFinite(Number(cursor || 0));
-        if (bothNumeric && Number(advanceTo) <= Number(cursor || 0)) break;
 
         seen.add(advanceTo);
         cursor = advanceTo;

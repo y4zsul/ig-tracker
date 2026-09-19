@@ -70,6 +70,23 @@
       tol: 5,
     },
     {
+      // The 700-of-900 report. Tokens that look numeric but do not ascend used
+      // to end the pass the moment one parsed smaller than the last, at a
+      // different random point every pass, so the capture never converged and
+      // the watch never settled.
+      label: 'followers: 900, tokens that do NOT ascend',
+      cfg: { n: 900, reported: 900, sigma: 40, bigToken: true, servedPageSize: 25, kind: 'followers' },
+      servable: 900,
+      tol: 5,
+    },
+    {
+      label: 'cursor cycles without ever repeating exactly',
+      cfg: { n: 400, reported: 400, sigma: 10, cycleAt: 200, servedPageSize: 25, kind: 'followers' },
+      servable: 200,
+      tol: 200,
+      mustTerminate: true,
+    },
+    {
       label: 'server ignores offsets it did not issue',
       cfg: { n: 1100, reported: 1100, sigma: 40, ignoreOffset: true },
       servable: 1100,
@@ -86,10 +103,17 @@
     const r = await runCollect(c.cfg, 1);
     log('');
     log(c.label);
-    if (c.tol) atMost('missed', c.servable - r.union, c.tol);
-    else check('captured', r.union, c.servable);
+    if (c.mustTerminate) {
+      // The assertion is that it stops at all, and does not spend its whole
+      // pass budget spinning on a cursor that never repeats.
+      atMost('requests before giving up', r.requests, 200);
+    } else if (c.tol) {
+      atMost('missed', c.servable - r.union, c.tol);
+    } else {
+      check('captured', r.union, c.servable);
+    }
     check('terminated cleanly', r.reason, 'complete');
-    log('   .. requests ' + r.requests + ', passes ' + r.passes);
+    log('   .. requests ' + r.requests + ', passes ' + r.passes + ', captured ' + r.union);
   }
 
   // ---------------------------------------------------------------- head scans

@@ -1181,6 +1181,10 @@
       let seenCursors = new Set();
       let tokenCursor = false;
       let emptyStreak = 0;
+      let stagnantPages = 0;
+      // Per pass: who this walk has already been shown. Separate from
+      // `unionSet`, which spans every pass.
+      let passSeen = new Set();
 
       // --- overlapping windows --------------------------------------------
       //
@@ -1294,7 +1298,23 @@
 
         const users = parsed.users.map(normaliseUser);
         total += users.length;
-        for (const u of users) if (u.pk) unionSet.add(u.pk);
+        const seenBefore = passSeen.size;
+        for (const u of users) {
+          if (!u.pk) continue;
+          unionSet.add(u.pk);
+          passSeen.add(u.pk);
+        }
+        // A page that shows nobody THIS PASS has not seen yet is the shape a
+        // cycling cursor makes: the server keeps handing back fresh-looking
+        // cursors that walk the same rows forever. Five in a row cannot happen
+        // while the cursor is really moving, because every page covers at
+        // least a stride of positions the pass has not visited.
+        //
+        // Measured per pass, not against the cross-pass union: a re-walk
+        // legitimately re-reads people an earlier pass already found, so
+        // scoring it against the union would call the whole of pass two
+        // stagnant and truncate it five pages in.
+        stagnantPages = passSeen.size > seenBefore ? 0 : stagnantPages + 1;
 
         post({
           type: 'collect:page',
@@ -1382,7 +1402,7 @@
         // is a large part of why captures came up short. Only an absent cursor,
         // or a run of empty pages, ends a pass now.
         emptyStreak = users.length === 0 ? emptyStreak + 1 : 0;
-        let endOfList = !next || emptyStreak >= 3;
+        let endOfList = !next || emptyStreak >= 3 || stagnantPages >= 5;
 
         if (!endOfList) {
           // /following/ returns a numeric offset ("200", "400"); /followers/
@@ -1449,12 +1469,26 @@
             prevPagePks = pks;
           }
 
+          // The only cursor test that holds for BOTH endpoints: have we been
+          // handed this exact cursor already this pass?
+          //
+          // There used to be an ordering test alongside it — if the next cursor
+          // parsed as a number no larger than the current one, end the pass.
+          // That is meaningless for /followers/, whose cursors are opaque
+          // tokens that merely happen to be long runs of digits. Two tokens
+          // have no order, so one that parsed smaller than the last ended the
+          // followers walk on the spot, at a different random point every pass.
+          // That is why followers captures kept landing well short, which in
+          // turn kept the watch from ever settling.
+          //
+          // It is not needed for offsets either: `offsetLike` already requires
+          // the offset to advance, and a numeric cursor that goes backwards
+          // fails that test and is followed as the opaque thing it evidently
+          // is. `stagnantPages` below is the backstop for a cursor that cycles
+          // without ever repeating exactly, and it works whatever the format.
           const looped = advanceTo === cursor || seenCursors.has(advanceTo);
-          const bothNumeric =
-            Number.isFinite(Number(advanceTo)) && Number.isFinite(Number(cursor || 0));
-          const wentBackwards = bothNumeric && Number(advanceTo) <= Number(cursor || 0);
 
-          if (looped || wentBackwards) {
+          if (looped) {
             // As far as the server will page. Not an error — end the pass so
             // the union still counts what was collected.
             endOfList = true;
@@ -1556,6 +1590,8 @@
         cursor = null;
         seenCursors = new Set();
         emptyStreak = 0;
+        stagnantPages = 0;
+        passSeen = new Set();
         // Per-pass: the next pass starts at offset 0 again, so the first page
         // legitimately repeats this pass's first page and must not read as the
         // server ignoring us. `slidingOff` is deliberately NOT reset — once the
