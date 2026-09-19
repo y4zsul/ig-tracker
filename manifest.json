@@ -1,7 +1,7 @@
 ﻿{
   "manifest_version": 3,
   "name": "InstaLurk",
-  "version": "7.6.1",
+  "version": "7.6.2",
   "description": "Tracks who an Instagram account starts following over time, and dates each new follow to when it was spotted. Runs entirely in your own browser.",
   "minimum_chrome_version": "114",
   "permissions": ["sidePanel", "storage", "unlimitedStorage"],

@@ -114,7 +114,11 @@ let view = []; // alphabetical, filtered
 
 let monKey = null; // selected watched list
 let monData = null; // { summary, accounts, snapshots }
-let pendingCheck = null; // trackKey awaiting a finished capture
+// The id of the run whose completion should navigate to its watch. An id, not
+// a flag: the panel has to be able to tell "the capture I just started has
+// finished" from "some earlier run is sitting there finished", and only the id
+// distinguishes them.
+let pendingCheck = null;
 
 // My-account screen: the two sides of my own graph, diffed against each other.
 let selfFollowing = null;
@@ -839,9 +843,12 @@ function renderGroups() {
 
 // --- controls ----------------------------------------------------------------
 
+/** Still going. 'starting' counts: the page has been told but has not replied. */
+const isRunning = (r) => !!r && (r.status === 'running' || r.status === 'starting');
+
 function busyRun() {
   const a = runs.find((r) => r.id === activeRunId);
-  return a && (a.status === 'running' || a.status === 'starting') ? a : null;
+  return isRunning(a) ? a : null;
 }
 
 function renderControls() {
@@ -1042,17 +1049,23 @@ chrome.runtime.onMessage.addListener((message) => {
     if (message.selfId) selfId = message.selfId;
 
     const fresh = runs.find((r) => r.id === currentId);
-    const finished = fresh && fresh.status !== 'running' && fresh.status !== 'starting';
     if (fresh) summary = fresh;
 
+    // Navigate on the run we are actually waiting for, NOT on whichever run
+    // the panel happens to be displaying. Those are the same thing only once
+    // loadRun has caught up, and a state broadcast can beat it — which is how
+    // Check now would occasionally open a different person's watch.
+    //
     // trackKey is only known once the page has resolved the target, so read it
     // off the finished run rather than guessing it at start time.
-    if (finished && pendingCheck && fresh && fresh.trackKey) {
+    const awaited = pendingCheck ? runs.find((r) => r.id === pendingCheck) : null;
+    if (awaited && !isRunning(awaited)) {
       pendingCheck = null;
-      onCaptureFinished(fresh.trackKey, fresh);
-      return;
+      if (awaited.trackKey) {
+        onCaptureFinished(awaited.trackKey, awaited);
+        return;
+      }
     }
-    if (finished) pendingCheck = null;
     render();
     return;
   }
@@ -1195,14 +1208,36 @@ async function beginCapture(usernameOrId, kind, opts) {
   });
 
   if (!res.ok) {
+    pendingCheck = null;
     setStatus('', false);
     els.alert.hidden = false;
     els.alert.textContent = res.error || 'Could not start.';
     return false;
   }
+
+  // Claim the navigation here, against the id the service worker just handed
+  // back, and never before. Callers used to set this themselves before
+  // awaiting the line above — and the worker broadcasts state while that await
+  // is still outstanding, so a state message could arrive with the flag
+  // already set while the panel was still pointed at the PREVIOUS run. That
+  // run was finished and carried its own trackKey, so the panel obediently
+  // navigated to whoever the last capture had been about.
+  pendingCheck = res.runId;
+
   delete els.status.dataset.sticky;
   await loadRun(res.runId);
   await loadState();
+
+  // Closes the other end of the same race: if the capture finished during the
+  // two awaits above, its state message came and went while pendingCheck was
+  // still null, and nothing would ever navigate.
+  const started = runs.find((r) => r.id === res.runId);
+  if (started && !isRunning(started) && started.trackKey) {
+    pendingCheck = null;
+    await onCaptureFinished(started.trackKey, started);
+    return true;
+  }
+
   render();
   return true;
 }
@@ -1214,14 +1249,12 @@ async function startNew() {
     setStatus('Enter a username first.', true);
     return;
   }
-  pendingCheck = true;
-  if (!(await beginCapture(name, els.kind.value))) pendingCheck = null;
+  await beginCapture(name, els.kind.value);
 }
 
 async function checkNow() {
   if (!monKey || !monData) return;
   const s = monData.summary;
-  pendingCheck = monKey;
   await beginCapture(s.targetId || s.username, s.kind, { speedKey: 'mon', quick: true });
 }
 
@@ -1331,7 +1364,6 @@ async function scanSelf(kind) {
   // beginCapture reads the pacing off the New stalk screen's select, so mirror
   // this screen's choice into it rather than keeping two sources of truth.
   els.speed.value = els.selfSpeed.value;
-  pendingCheck = true;
   els.selfWarn.hidden = true;
   await beginCapture(selfId, kind);
 }
