@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.4.1
+// @version      2.5.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -333,7 +333,19 @@
    * /followers/, so nothing assumes a format â€” the cursor only has to change
    * and not repeat. A SHORT page is normal and must not end the walk.
    */
-  async function walkList(kind, pk, expectedTotal, onProgress) {
+  /**
+   * Same verdict rule as headScanVerdict() in src/interceptor.js. Kept in step
+   * by hand, because a userscript cannot import and this file ships alone.
+   */
+  function headScanVerdict(s) {
+    if (s.unknownsFound < s.expectedNew) {
+      return s.depth >= s.ceilRows ? 'escalate' : 'continue';
+    }
+    if (s.depth < s.floorRows) return 'continue';
+    return s.depthSinceLastUnknown >= s.quietDepth ? 'satisfied' : 'continue';
+  }
+
+  async function walkList(kind, pk, expectedTotal, onProgress, scan) {
     const pageSize = kind === 'followers' ? 25 : 200;
     const baseDelay = kind === 'followers' ? 700 : 900;
     // A backstop, not a target. The loop exits on diminishing returns long
@@ -370,6 +382,22 @@
     // Once the server shows it won't honour an offset it did not hand out,
     // that holds for the rest of the capture.
     let slidingOff = false;
+
+    // --- head scan -----------------------------------------------------------
+    // A re-check of a settled watch reads the top of the list until the
+    // profile's own count is accounted for, rather than walking the whole
+    // thing. One early exit layered on the ordinary walk: if it never fires, or
+    // escalates, this behaves exactly as a full capture.
+    const knownPks =
+      scan && scan.mode === 'head' && scan.knownPks && scan.knownPks.length
+        ? new Set(scan.knownPks)
+        : null;
+    // No reported count means no oracle to stop against, so nothing to scan
+    // against either.
+    let headMode = !!(knownPks && expectedTotal != null && scan.prevCount != null);
+    const expectedNew = headMode ? Math.max(0, expectedTotal - scan.prevCount) : 0;
+    let unknownsFound = 0;
+    let deepestNewDepth = 0;
 
     while (pass < maxPasses) {
       let cursor = null;
@@ -411,11 +439,44 @@
         }
         if (!json || !Array.isArray(json.users)) throw new Halt('Unexpected response shape.', 'parse');
 
+        let newHere = 0;
         for (const raw of json.users) {
           const u = shapeUser(raw);
-          if (u.pk && !union.has(u.pk)) union.set(u.pk, u);
+          if (u.pk && !union.has(u.pk)) {
+            union.set(u.pk, u);
+            if (headMode && !knownPks.has(u.pk)) newHere++;
+          }
         }
-        onProgress({ count: union.size, pass: pass + 1, expectedTotal });
+        onProgress({ count: union.size, pass: pass + 1, expectedTotal, head: headMode });
+
+        if (headMode) {
+          if (newHere) {
+            unknownsFound += newHere;
+            // Depth is distinct accounts seen, not rows served: overlapping
+            // windows serve most positions twice.
+            deepestNewDepth = union.size;
+          }
+          const verdict = headScanVerdict({
+            depth: union.size,
+            depthSinceLastUnknown: union.size - deepestNewDepth,
+            unknownsFound,
+            expectedNew,
+            floorRows: scan.floorRows,
+            ceilRows: scan.ceilRows,
+            quietDepth: scan.quietDepth,
+          });
+          if (verdict === 'satisfied') {
+            return {
+              users: [...union.values()],
+              aborted: false,
+              reachedEnd: false,
+              scope: 'head',
+              headDepth: union.size,
+              deepestNewDepth,
+            };
+          }
+          if (verdict === 'escalate') headMode = false;
+        }
 
         const next = json.next_max_id != null ? String(json.next_max_id) : null;
         // An empty page is NOT the end. Offset paging over a list Instagram is
@@ -425,6 +486,8 @@
         emptyStreak = json.users.length ? 0 : emptyStreak + 1;
         if (!next || emptyStreak >= 3) {
           reachedEnd = true;
+          // Ran out of list, so this is a whole walk however it started.
+          headMode = false;
           break;
         }
         const curOff = Number(cursor || 0);
@@ -538,7 +601,14 @@
       if (pass < maxPasses) await sleep(1500);
     }
 
-    return { users: [...union.values()], aborted: false, reachedEnd };
+    return {
+      users: [...union.values()],
+      aborted: false,
+      reachedEnd,
+      scope: 'full',
+      headDepth: null,
+      deepestNewDepth: null,
+    };
   }
 
   // --- storage ---------------------------------------------------------------
@@ -625,7 +695,14 @@
    * nothing. What means something is WHEN an account first showed up: absent
    * from capture N, present in N+1, so it arrived between the two.
    */
-  function ingest(kind, pk, username, users, expectedTotal, complete) {
+  /** Did this capture see everything it needed to? Matches src/background.js. */
+  function snapshotReliable(s) {
+    if (!s) return false;
+    if (typeof s.reliable === 'boolean') return s.reliable;
+    return s.full === true && s.complete === true;
+  }
+
+  function ingest(kind, pk, username, users, expectedTotal, complete, walk) {
     const key = `${kind}:${pk}`;
     const at = Date.now();
     let t = data.tracks[key];
@@ -636,18 +713,29 @@
     }
     if (username) t.username = username;
 
+    // A head scan read only the top of the list, so it can say nothing about
+    // the tail: no departures, and no settling a baseline on it.
+    const headScan = !!(walk && walk.scope === 'head');
+
     const prev = t.snapshots.length ? t.snapshots[t.snapshots.length - 1] : null;
-    const arrivalsTrustworthy = prev ? prev.full === true && prev.complete === true : false;
+    const arrivalsTrustworthy = snapshotReliable(prev);
+    // How far down the previous capture looked. An account above that line
+    // that was not recorded then is one that scan read past and did not find.
+    const prevDepth = !prev ? 0 : prev.scope === 'head' ? prev.headDepth || 0 : Infinity;
 
     const seen = new Set();
     const fresh = [];
+    const freshRank = Object.create(null);
+    let rank = 0;
     for (const u of users) {
       if (!u.pk) continue;
+      rank++;
       seen.add(u.pk);
       const acc = t.accounts[u.pk];
       if (!acc) {
         t.accounts[u.pk] = packAccount(u, at, isFirst, isFirst ? null : arrivalsTrustworthy);
         fresh.push(u.pk);
+        freshRank[u.pk] = rank;
       } else {
         acc.g = null;
         if (u.username) acc.u = u.username;
@@ -656,7 +744,7 @@
     }
 
     let departed = 0;
-    if (complete && !isFirst) {
+    if (complete && !headScan && !isFirst) {
       for (const p of Object.keys(t.accounts)) {
         if (!seen.has(p) && !t.accounts[p].g) {
           t.accounts[p].g = at;
@@ -668,23 +756,30 @@
     const drift = expectedTotal != null ? expectedTotal - users.length : null;
     // Half a per cent, not two. Two per cent of a 1,100-follow list is
     // twenty-two people, and calling a capture that missed twenty-two people
-    // "full" settles the baseline on it â€” which dates those twenty-two as new
+    // "full" settles the baseline on it, which dates those twenty-two as new
     // follows the next time they turn up. Must stay in step with the walk's own
     // tolerance in walkList().
-    const full = drift == null ? null : Math.abs(drift) <= Math.max(1, expectedTotal * 0.005);
+    //
+    // A head scan did not measure this at all, so it records null rather than a
+    // false that the next capture would read as "the last one came up short".
+    const full =
+      headScan || drift == null ? null : Math.abs(drift) <= Math.max(1, expectedTotal * 0.005);
 
     let arrived = fresh.length;
     let absorbed = 0;
 
-    const absorbAll = () => {
-      for (const p of fresh) {
+    const absorb = (pks) => {
+      for (const p of pks) {
         const a = t.accounts[p];
+        if (!a || a.b) continue;
         a.b = 1;
         a.c = null;
         absorbed++;
+        arrived--;
       }
-      arrived = 0;
+      if (arrived < 0) arrived = 0;
     };
+    const absorbAll = () => absorb(fresh);
 
     // Nothing is dated until the baseline stops growing. Until the walk has
     // demonstrably converged, a first sighting is far more likely to be the
@@ -695,17 +790,34 @@
     // convergence looks like on a list that plateaus below its reported count.
     const wasSettled = t.settled === true;
 
+    const prevExpected = prev ? prev.expectedTotal : null;
+    const expectedDelta =
+      prevExpected != null && expectedTotal != null ? expectedTotal - prevExpected : null;
+    const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
+
     if (!isFirst && !wasSettled && fresh.length) {
       absorbAll();
+    } else if (wasSettled && headScan && fresh.length) {
+      // A head scan never learns `departed`, so the count alone is not enough:
+      // an account that follows two and unfollows two shows a flat count every
+      // check, and a count-only rule would absorb every real new follow and
+      // report "nobody new" forever.
+      //
+      // Depth is the better evidence. The previous scan read down to
+      // `prevDepth`; an account above that line now, absent then, is one that
+      // scan looked straight at and did not find. Below it nobody has looked,
+      // so a first sighting there is indistinguishable from a recovered miss.
+      const dated = [];
+      const unseen = [];
+      for (const p of fresh) (freshRank[p] <= prevDepth ? dated : unseen).push(p);
+      absorb(unseen);
+      if (dated.length && plausibleNew != null && dated.length > Math.max(2, plausibleNew * 2)) {
+        for (const p of dated) t.accounts[p].c = 0;
+      }
     } else if (wasSettled) {
       // The strongest tell that an "arrival" is a recovered miss: the profile's
       // own count did not rise enough to account for it. If they followed
       // nobody, anybody newly visible was there all along.
-      const prevExpected = prev ? prev.expectedTotal : null;
-      const expectedDelta =
-        prevExpected != null && expectedTotal != null ? expectedTotal - prevExpected : null;
-      const plausibleNew = expectedDelta == null ? null : Math.max(0, expectedDelta + departed);
-
       if (plausibleNew === 0 && fresh.length) absorbAll();
       else if (plausibleNew != null && arrived > plausibleNew) {
         // Some are real and some are recovered misses, with no way to tell
@@ -718,11 +830,24 @@
       }
     }
 
-    if (!t.settled && complete && (full === true || (!isFirst && fresh.length === 0))) {
+    // Only a walk that reached the end can prove a baseline whole, so a head
+    // scan never settles one. It is only ever run against a settled watch, so
+    // this never leaves anything stuck.
+    if (!t.settled && complete && !headScan && (full === true || (!isFirst && fresh.length === 0))) {
       t.settled = true;
     }
 
-    t.snapshots.push({ at, count: users.length, expectedTotal, complete, full });
+    t.snapshots.push({
+      at,
+      count: users.length,
+      expectedTotal,
+      complete: complete && !headScan,
+      full,
+      scope: headScan ? 'head' : 'full',
+      headDepth: headScan && walk ? walk.headDepth : null,
+      deepestNewDepth: walk ? walk.deepestNewDepth : null,
+      reliable: headScan ? true : complete && full === true,
+    });
     if (t.snapshots.length > 100) t.snapshots.splice(0, t.snapshots.length - 100);
 
     save();
@@ -1529,10 +1654,21 @@
     try {
       const t = await resolveTarget(input);
       const expected = t.info && t.info.following;
+      // No scan plan: "Start a stalk" always walks the whole list, even for an
+      // account already being watched. That is what makes it the way to clear
+      // out accounts that have since been unfollowed, which a check cannot see.
       const out = await walkList('following', t.pk, expected, progress);
       if (!out.users.length) throw new Halt('No accounts returned. The list may be hidden.', 'empty');
 
-      const r = ingest('following', t.pk, t.username, out.users, expected, out.reachedEnd && !out.aborted);
+      const r = ingest(
+        'following',
+        t.pk,
+        t.username,
+        out.users,
+        expected,
+        out.reachedEnd && !out.aborted,
+        out
+      );
       monKey = `following:${t.pk}`;
       if (r.isFirst) {
         setNote(
@@ -1564,12 +1700,49 @@
     setNote('', false);
     try {
       const info = await fetchUserInfo(t.pk);
-      const expected = info && info.following;
+      // `info.following` regardless of kind, as this read for a long time, fed
+      // the FOLLOWING count in as a followers watch's expected total. That one
+      // number drives the completion tolerance, whether a capture counts as
+      // full, whether the baseline settles, and how many arrivals are
+      // plausible, so a followers watch had all four wrong at once.
+      const expected = info ? (t.kind === 'followers' ? info.followers : info.following) : null;
       if (info && info.username) t.username = info.username;
-      const out = await walkList(t.kind, t.pk, expected, progress);
+
+      // A settled watch does not need the whole list re-read, only the top of
+      // it until the profile's own count is accounted for. Same rules as the
+      // extension: see scanPlanFor() in src/background.js.
+      const prev = t.snapshots.length ? t.snapshots[t.snapshots.length - 1] : null;
+      const knownPks =
+        t.settled === true && prev && prev.expectedTotal != null
+          ? Object.keys(t.accounts).filter((pk) => !t.accounts[pk].g)
+          : null;
+      const observedDeepest = t.snapshots
+        .slice(-5)
+        .reduce((m, s) => Math.max(m, s.deepestNewDepth || 0), 0);
+      const scan =
+        knownPks && knownPks.length
+          ? {
+              mode: 'head',
+              prevCount: prev.expectedTotal,
+              knownPks,
+              floorRows: Math.max(300, 3 * observedDeepest),
+              ceilRows: Math.max(1000, Math.ceil(prev.expectedTotal * 0.25)),
+              quietDepth: 150,
+            }
+          : null;
+
+      const out = await walkList(t.kind, t.pk, expected, progress, scan);
       if (!out.users.length) throw new Halt('No accounts returned. The list may be hidden.', 'empty');
 
-      const r = ingest(t.kind, t.pk, t.username, out.users, expected, out.reachedEnd && !out.aborted);
+      const r = ingest(
+        t.kind,
+        t.pk,
+        t.username,
+        out.users,
+        expected,
+        out.reachedEnd && !out.aborted,
+        out
+      );
       const bits = [r.arrived ? `${nf.format(r.arrived)} new.` : 'Nobody new.'];
       if (r.absorbed) {
         bits.push(`${nf.format(r.absorbed)} were missed by an earlier scan. Added to the baseline, not counted as new.`);

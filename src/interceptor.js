@@ -437,6 +437,130 @@
     };
   }
 
+  // --- scan policy -----------------------------------------------------------
+  //
+  // The two rules that decide when a capture is finished. They live out here,
+  // as pure functions over explicit arguments, for one reason: inline in the
+  // loop they were untestable, and both have been wrong in ways that silently
+  // lost people. tools/sim lifts them out of this file by name and exercises
+  // them directly.
+  //
+  // Neither reads or writes anything outside its argument object. Counters
+  // that need to persist between calls are passed in and handed back.
+
+  /**
+   * Should a head scan stop, keep reading, or give up and walk the whole list?
+   *
+   * A re-check does not need to enumerate the list; it needs to answer "who is
+   * here that wasn't before". The profile's own reported count is an
+   * independent oracle for HOW MANY new accounts exist, which is what makes
+   * stopping early safe: if we have found that many and the last few pages
+   * turned up nobody, there is nothing left to find near the top.
+   *
+   * `escalate` is the safety net. If the count says accounts are missing and
+   * we have read deep enough that they plainly are not near the top, the
+   * assumption behind head scanning does not hold for this account and the
+   * walk falls through to a full one.
+   */
+  function headScanVerdict(s) {
+    // Still short of what the profile's count demands: keep reading until the
+    // ceiling, then admit they are not up here.
+    if (s.unknownsFound < s.expectedNew) {
+      return s.depth >= s.ceilRows ? 'escalate' : 'continue';
+    }
+    // The count is accounted for. Read to the floor anyway — a stale count, or
+    // a follow and an unfollow that cancel out, would otherwise stop us after
+    // a single page.
+    if (s.depth < s.floorRows) return 'continue';
+    // Quiet is measured in POSITIONS read since the last unknown, not pages.
+    // Pages are not comparable across the two endpoints: /following/ serves
+    // 200 rows and /followers/ 25, so "two quiet pages" would mean 400
+    // positions of reassurance on one and 50 on the other.
+    return s.depthSinceLastUnknown >= s.quietDepth ? 'satisfied' : 'continue';
+  }
+
+  /**
+   * Should the capture stop, now that a full walk has finished?
+   *
+   * Extracted verbatim from the loop — every rule here is unchanged. `quiet`
+   * is carried in and returned rather than closed over, so this stays pure.
+   */
+  function passVerdict(s) {
+    const { pass, maxPasses, union, lastUnion, quiet, expectedTotal, pageSize } = s;
+    const marginal = lastUnion < 0 ? Infinity : union - lastUnion;
+    const known = expectedTotal != null && expectedTotal > 0;
+
+    // Re-walking has sharply diminishing returns inside one session: the
+    // ranking only shuffles a little over a few minutes, so the same people
+    // stay hidden and each extra pass recovers less than the last. A pass
+    // that turns up one straggler out of two hundred missing is not worth
+    // another full walk, and that long tail is most of the wait.
+    //
+    // A check tomorrow sees a properly different shuffle and recovers far
+    // more for far less waiting, and anything it finds folds into the
+    // baseline instead of being dated as a new follow. So near-zero counts
+    // as zero, and the walk stops instead of grinding.
+    //
+    // The bar scales with what a pass costs. /followers/ is capped at 25 rows
+    // a page against 200 for /following/, so a followers walk is roughly eight
+    // times the requests and eight times the wait for the same list, and it
+    // should give up on stragglers correspondingly sooner.
+    //
+    // That reasoning only holds once the capture is basically there. While it
+    // is still MATERIALLY short — the 900-of-1,100 case people kept reporting
+    // — "this pass found almost nobody" is not a reason to stop. It is a
+    // reason to run the next pass, which uses a different stride and therefore
+    // different window boundaries, and so looks in places this one
+    // structurally could not. So the bar drops to literally zero while a large
+    // chunk of the list is still missing.
+    const shortfall = known ? (expectedTotal - union) / expectedTotal : 0;
+    const materiallyShort = shortfall > 0.01;
+    const rate = materiallyShort ? 0 : pageSize >= 100 ? 0.002 : 0.01;
+    const negligible = rate === 0 ? 0 : known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
+    const nextQuiet = marginal <= negligible ? quiet + 1 : 0;
+
+    // Never wait for union === expectedTotal: that count includes deactivated
+    // accounts which are counted but never returned, so many targets plateau
+    // permanently below it and would walk forever.
+    //
+    // This used to sit at 2%, matching the tolerance the diffing side uses to
+    // call a capture full — which quietly made 2% a TARGET. Simulated against
+    // a re-ranking list the walk stopped the instant it crossed 98%, every
+    // time, so a 1,100-following account reliably finished 20 people short and
+    // handed those 20 to the next check as "new". Two per cent of a list is
+    // not a rounding error, it is twenty accounts.
+    //
+    // The gap that genuinely cannot be closed is deactivated and deleted
+    // accounts: Instagram counts them in the profile total and never returns
+    // them, so an exact match is impossible and demanding one would walk
+    // forever. Half a per cent covers that; the quiet-pass rule is what stops
+    // the walk on anything larger.
+    const tolerance = known ? Math.max(1, expectedTotal * 0.005) : 0;
+    // Reaching the reported count is the only self-evident finish; there is
+    // nobody left to find. Short of that, a near-complete FIRST pass is not
+    // proof of anything — it is one look at a list that moves while you read
+    // it. Anything inside the tolerance still earns a second pass, which walks
+    // with a different stride and so looks between the seams the first one
+    // left. That second pass is the difference between 1,095 and 1,100.
+    const effectivelyComplete = known && union >= expectedTotal - (pass >= 2 ? tolerance : 0);
+    // Otherwise be stubborn: a pass that finds nobody new is NOT proof the
+    // list is whole — measured runs go 746, 766, 771, 774, 774, and two
+    // identical walks have agreed on 252 of 253 while a third found the
+    // straggler. Stopping at the first quiet pass is what produces phantom
+    // "new follows" on the next check.
+    //
+    // With no reported count to check against there is nothing that can call a
+    // capture complete, so an unknown total earns the same second pass a
+    // known-short one does rather than stopping on one quiet walk.
+    const short = known && !effectivelyComplete;
+    const quietNeeded = !known || short ? 2 : 1;
+
+    return {
+      done: pass >= maxPasses || effectivelyComplete || nextQuiet >= quietNeeded,
+      quiet: nextQuiet,
+    };
+  }
+
   // --- collector -------------------------------------------------------------
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -945,8 +1069,28 @@
     // it at 2.
     const maxPasses = Math.max(1, cmd.maxPasses || 3);
     // Union across passes, tracked here so a pass boundary needs no round trip
-    // to the service worker to know whether it found anyone new.
+    // to the service worker to know whether it found anyone new. Its size is
+    // also how deep a head scan has read, since it counts distinct accounts
+    // rather than rows served.
     const unionSet = new Set();
+
+    // --- head scan -----------------------------------------------------------
+    //
+    // The service worker decides the policy and hands it over as a plan; this
+    // just obeys it. A re-check of a settled watch does not need to enumerate
+    // the list, only to find what is new at the top, so `head` reads until the
+    // profile's reported count is accounted for and then stops.
+    //
+    // Head mode is a single early exit layered onto the ordinary walk. If it
+    // never triggers, or escalates, the capture proceeds exactly as a full one
+    // would — there is no separate code path to keep in step.
+    const plan = cmd.plan && typeof cmd.plan === 'object' ? cmd.plan : null;
+    const knownPks =
+      plan && Array.isArray(plan.knownPks) && plan.knownPks.length ? new Set(plan.knownPks) : null;
+    let headMode = !!(plan && plan.mode === 'head' && knownPks);
+    let unknownsFound = 0;
+    let deepestNewDepth = 0;
+    let expectedNew = 0;
 
     try {
       let targetId = cmd.targetId || null;
@@ -1001,10 +1145,23 @@
         }
       }
 
+      // How many new accounts the profile's own count says exist. This is the
+      // oracle the head scan stops against, and it can only be worked out here,
+      // after the re-read above — the plan supplies the previous count, but the
+      // current one is not known until the profile has been asked.
+      //
+      // No reported count means no oracle, and no way to tell "found them all"
+      // from "stopped too early", so there is nothing to head-scan against.
+      if (headMode) {
+        if (expectedTotal == null || plan.prevCount == null) headMode = false;
+        else expectedNew = Math.max(0, expectedTotal - plan.prevCount);
+      }
+
       post({
         type: 'collect:started',
         runId: run.id,
         kind: cmd.kind,
+        scope: headMode ? 'head' : 'full',
         targetId,
         targetUsername,
         expectedTotal,
@@ -1154,6 +1311,66 @@
 
         pageIndex++;
 
+        // --- head scan: is there any point reading further? ----------------
+        // The page above has already been posted, so everything found so far is
+        // safely with the service worker whichever way this goes.
+        if (headMode) {
+          let newHere = 0;
+          for (const u of users) {
+            if (u.pk && !knownPks.has(u.pk)) newHere++;
+          }
+          if (newHere) {
+            unknownsFound += newHere;
+            // Depth is measured in distinct accounts seen, not rows served:
+            // overlapping windows serve most positions twice.
+            deepestNewDepth = unionSet.size;
+          }
+
+          const verdict = headScanVerdict({
+            depth: unionSet.size,
+            depthSinceLastUnknown: unionSet.size - deepestNewDepth,
+            unknownsFound,
+            expectedNew,
+            floorRows: plan.floorRows,
+            ceilRows: plan.ceilRows,
+            quietDepth: plan.quietDepth,
+          });
+
+          if (verdict === 'satisfied') {
+            post({
+              type: 'collect:done',
+              runId: run.id,
+              reason: 'complete',
+              scope: 'head',
+              pages: pageIndex,
+              total,
+              passes: 1,
+              reachedEnd: false,
+              // How far down the list this scan actually looked. The next
+              // check needs it: an account appearing above this depth next
+              // time is one THIS scan read past and did not see, which is
+              // what makes it a real new follow rather than a recovered miss.
+              headDepth: unionSet.size,
+              // Fed back into the next plan's floor. If new follows start
+              // turning up deeper for this account, its scans get deeper.
+              deepestNewDepth,
+            });
+            return;
+          }
+
+          if (verdict === 'escalate') {
+            // The profile's count says accounts are missing and they are
+            // plainly not near the top, so the premise head scanning rests on
+            // does not hold here. Fall through into an ordinary full walk.
+            headMode = false;
+            post({
+              type: 'collect:warn',
+              runId: run.id,
+              message: `Found ${unknownsFound} new but the profile's count says ${expectedNew}. Reading the whole list.`,
+            });
+          }
+        }
+
         // There is no has_more/page_info, and a SHORT page is normal — a
         // 197-row page still advances the offset by the full 200 — so the only
         // terminators are an absent cursor or one that stops moving.
@@ -1282,87 +1499,24 @@
         reachedEnd = true;
         pass++;
 
+        // Reaching the end of the list means this was a whole walk, not a peek
+        // at the top, whatever the plan asked for. Say so, so the diffing side
+        // is allowed to infer departures from it.
+        headMode = false;
+
         const union = unionSet.size;
-        const marginal = lastUnion < 0 ? Infinity : union - lastUnion;
+        const verdict = passVerdict({
+          pass,
+          maxPasses,
+          union,
+          lastUnion,
+          quiet,
+          expectedTotal,
+          pageSize,
+        });
         lastUnion = union;
-
-        const known = expectedTotal != null && expectedTotal > 0;
-
-        // Re-walking has sharply diminishing returns inside one session: the
-        // ranking only shuffles a little over a few minutes, so the same people
-        // stay hidden and each extra pass recovers less than the last. A pass
-        // that turns up one straggler out of two hundred missing is not worth
-        // another full walk, and that long tail is most of the wait.
-        //
-        // A check tomorrow sees a properly different shuffle and recovers far
-        // more for far less waiting, and anything it finds folds into the
-        // baseline instead of being dated as a new follow. So near-zero counts
-        // as zero, and the walk stops instead of grinding.
-        // The bar scales with what a pass costs. /followers/ is capped at 25
-        // rows a page against 200 for /following/, so a followers walk is
-        // roughly eight times the requests and eight times the wait for the
-        // same list, and it should give up on stragglers correspondingly
-        // sooner.
-        //
-        // That reasoning only holds once the capture is basically there. While
-        // it is still MATERIALLY short — the 900-of-1,100 case people keep
-        // reporting — "this pass found almost nobody" is not a reason to stop.
-        // It is a reason to run the next pass, which uses a different stride
-        // and therefore different window boundaries, and so looks in places
-        // this one structurally could not. So the bar drops to literally zero
-        // while a large chunk of the list is still missing.
-        const shortfall = known ? (expectedTotal - unionSet.size) / expectedTotal : 0;
-        const materiallyShort = shortfall > 0.01;
-        const rate = materiallyShort ? 0 : pageSize >= 100 ? 0.002 : 0.01;
-        const negligible = rate === 0 ? 0 : known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
-        quiet = marginal <= negligible ? quiet + 1 : 0;
-        // Never wait for union === expectedTotal: that count includes
-        // deactivated accounts which are counted but never returned, so many
-        // targets plateau permanently below it and would walk forever.
-        //
-        // This used to sit at 2%, matching the tolerance the diffing side uses
-        // to call a capture full — which quietly made 2% a TARGET. Simulated
-        // against a re-ranking list the walk stopped the instant it crossed
-        // 98%, every time, so a 1,100-following account reliably finished 20
-        // people short and handed those 20 to the next check as "new". Two per
-        // cent of a list is not a rounding error, it is twenty accounts.
-        //
-        // The gap that genuinely cannot be closed is deactivated and deleted
-        // accounts: Instagram counts them in the profile total and never
-        // returns them in the list, so an exact match is impossible and
-        // demanding one would walk forever. Half a per cent covers that; the
-        // quiet-pass rule below is what stops the walk on anything larger.
-        const tolerance = known ? Math.max(1, expectedTotal * 0.005) : 0;
-        // Reaching the reported count is the only self-evident finish; there is
-        // nobody left to find. Short of that, a near-complete FIRST pass is not
-        // proof of anything — it is one look at a list that moves while you
-        // read it. Anything inside the tolerance still earns a second pass,
-        // which walks with a different stride and so looks between the seams
-        // the first one left. That second pass is where the last handful comes
-        // from, and it is the difference between "1,095 of 1,100" and "1,100".
-        const effectivelyComplete =
-          known && union >= expectedTotal - (pass >= 2 ? tolerance : 0);
-        // Otherwise be stubborn: a pass that finds nobody new is NOT proof the
-        // list is whole — measured runs go 746, 766, 771, 774, 774, and two
-        // identical walks have agreed on 252 of 253 while a third found the
-        // straggler. Stopping at the first quiet pass is what produces phantom
-        // "new follows" on the next check.
-        const short = known && !effectivelyComplete;
-        // Re-walking exists to recover people that offset paging skipped, and
-        // a record-anchored cursor supposedly cannot skip anyone, so this used
-        // to accept a single quiet pass on /followers/ to save the wait at 25
-        // rows a page.
-        //
-        // Reports say otherwise: followers lists come up short the same way
-        // following lists do. The cursor being opaque is not evidence that it
-        // is record-anchored, and one quiet pass is thin proof either way, so
-        // a short list now earns a second pass regardless of cursor type.
-        //
-        // With no reported count to check against there is nothing that can
-        // call a capture complete, so an unknown total earns the same second
-        // pass a known-short one does rather than stopping on one quiet walk.
-        const quietNeeded = !known || short ? 2 : 1;
-        const done = pass >= maxPasses || effectivelyComplete || quiet >= quietNeeded;
+        quiet = verdict.quiet;
+        const done = verdict.done;
 
         if (!done) {
           post({
@@ -1388,6 +1542,9 @@
             type: 'collect:done',
             runId: run.id,
             reason: 'complete',
+            // Reached here only by walking to the end of the list, so this is
+            // a full capture even if the plan asked for a head scan.
+            scope: 'full',
             pages: pageIndex,
             total,
             passes: pass,

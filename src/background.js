@@ -131,6 +131,82 @@ function captureTolerance(expectedTotal) {
   return Math.max(1, expectedTotal * 0.005);
 }
 
+/**
+ * Could this capture be trusted to have seen everything it needed to?
+ *
+ * Not the same question as "did it read the whole list". A head scan reads the
+ * top only and is still reliable, because it stops against the profile's own
+ * reported count rather than against its own appetite — it knows how many new
+ * accounts to expect and does not stop until it has found them.
+ *
+ * The legacy branch matters: snapshots written before `reliable` existed are
+ * judged by the exact expression that used to be inlined at the call site, so
+ * no stored record needs rewriting.
+ */
+function snapshotReliable(s) {
+  if (!s) return false;
+  if (typeof s.reliable === 'boolean') return s.reliable;
+  return s.full === true && s.complete === true;
+}
+
+/**
+ * How to read the list this time: the whole thing, or just the top?
+ *
+ * The policy lives here rather than in the collector so the collector stays a
+ * pager that obeys a plan. Everything the head scan needs to decide when to
+ * stop travels in the plan, except the CURRENT reported count, which only the
+ * collector can get.
+ *
+ * Head mode is issued only for an explicit check against a settled watch. A
+ * first capture, an unsettled one, or a re-run from "Start a new stalk" all get
+ * the full walk — which is also the escape hatch for clearing out accounts that
+ * have since been unfollowed, since only a full walk can prove an absence.
+ */
+function scanPlanFor(kind, knownId, req) {
+  const t = knownId ? state.tracked.get(`${kind}:${knownId}`) : null;
+  const maxPasses = t ? 4 : 6;
+  const prev = t && t.snapshots.length ? t.snapshots[t.snapshots.length - 1] : null;
+  const prevCount = prev ? prev.expectedTotal : null;
+
+  if (!req.quick || !t || t.settled !== true || prevCount == null) {
+    return { mode: 'full', maxPasses };
+  }
+
+  // Departed accounts must not count as known, or a re-follow would never
+  // register as an arrival.
+  const knownPks = Object.keys(t.accounts).filter((pk) => !t.accounts[pk].goneAt);
+  if (!knownPks.length) return { mode: 'full', maxPasses };
+
+  // How deep to read before a quiet run of pages is allowed to stop the scan.
+  // The count oracle already forces the scan deeper whenever it has not found
+  // as many new accounts as the count demands, so this floor is purely the
+  // guard against a STALE count: if Instagram's reported number has not caught
+  // up with a follow yet, the oracle is satisfied at zero and only the floor
+  // keeps us looking.
+  //
+  // It also self-calibrates. "New follows are near the top" is an assumption,
+  // so every head scan records how deep it actually had to go, and the floor
+  // grows to three times the deepest of the last five. If this target's new
+  // follows start showing up further down, its scans follow them down; if they
+  // never do, scans stay cheap. Evidence beats the assumption either way.
+  const observedDeepest = (t.snapshots || [])
+    .slice(-5)
+    .reduce((m, s) => Math.max(m, s.deepestNewDepth || 0), 0);
+
+  return {
+    mode: 'head',
+    maxPasses,
+    prevCount,
+    knownPks,
+    floorRows: Math.max(300, 3 * observedDeepest),
+    ceilRows: Math.max(1000, Math.ceil(prevCount * 0.25)),
+    // Positions of nobody-new before stopping, not pages: /following/ serves
+    // 200 rows a page and /followers/ 25, so counting pages would mean eight
+    // times as much reassurance on one as the other.
+    quietDepth: 150,
+  };
+}
+
 // --- persistence -------------------------------------------------------------
 
 const pending = new Set();
@@ -195,24 +271,49 @@ function ingestSnapshot(run) {
   }
   if (run.targetUsername) t.username = run.targetUsername;
 
+  // A head scan deliberately reads only the top of the list, so it can say
+  // nothing whatever about the tail. Written as a positive test: a run with no
+  // scope recorded reads as a head scan and is denied the powers only a full
+  // walk earns, which is the safe direction to fail in.
+  const headScan = run.scope !== 'full';
+
   // Removal detection needs a capture that actually reached the end of the
   // list; a truncated one would read every unseen account as departed.
-  const trustworthy = run.status === 'complete';
+  const trustworthy = run.status === 'complete' && !headScan;
 
   // Did this capture get essentially everything? Never require an exact match
   // with the reported count: that count includes deactivated and deleted
   // accounts which are counted but never listed, so lists plateau below it.
+  //
+  // `null` rather than `false` on a head scan — it did not measure this, and
+  // recording a lie here would make the NEXT capture distrust its own
+  // arrivals.
   const drift = run.expectedTotal != null ? run.expectedTotal - run.users.length : null;
-  const full = drift == null ? null : Math.abs(drift) <= captureTolerance(run.expectedTotal);
+  const full =
+    headScan || drift == null ? null : Math.abs(drift) <= captureTolerance(run.expectedTotal);
 
   // An account "arriving" is only believable if the PREVIOUS capture was good
   // enough to have seen it. After a short capture, a first sighting is just as
   // likely to be a miss being corrected as a real new follow.
   const prev = t.snapshots.length ? t.snapshots[t.snapshots.length - 1] : null;
-  const arrivalsTrustworthy = prev ? prev.full === true && prev.complete === true : false;
+  const arrivalsTrustworthy = snapshotReliable(prev);
+
+  // How deep the PREVIOUS capture looked. A full walk saw the whole list, so
+  // anything is "inside" it. This is what lets a head scan date an arrival
+  // with confidence: if the last scan read past this position and did not see
+  // the account, the account was not there.
+  const prevDepth = !prev
+    ? 0
+    : prev.scope === 'head'
+    ? prev.headDepth || 0
+    : Infinity;
 
   const seen = new Set();
   const freshPks = [];
+  // Where in the read order each newcomer turned up, so a head scan can tell
+  // "the last scan looked here and they weren't there" from "nobody has looked
+  // this far down before".
+  const freshRank = Object.create(null);
   let arrived = 0;
   for (const u of run.users) {
     if (!u.pk) continue;
@@ -220,6 +321,7 @@ function ingestSnapshot(run) {
     const acc = t.accounts[u.pk];
     if (!acc) {
       freshPks.push(u.pk);
+      freshRank[u.pk] = u.followRank || run.users.length;
       t.accounts[u.pk] = {
         pk: u.pk,
         username: u.username,
@@ -265,17 +367,29 @@ function ingestSnapshot(run) {
   let absorbed = 0;
 
   /** Fold accounts into the baseline instead of dating them as arrivals. */
-  const absorbAll = () => {
-    for (const pk of freshPks) {
+  const absorb = (pks) => {
+    for (const pk of pks) {
       const acc = t.accounts[pk];
-      if (!acc) continue;
+      if (!acc || acc.baseline) continue;
       acc.baseline = true;
       acc.absorbed = true;
       acc.confirmed = null;
       acc.confirmReason = null;
       absorbed++;
+      arrived--;
     }
-    arrived = 0;
+    if (arrived < 0) arrived = 0;
+  };
+  const absorbAll = () => absorb(freshPks);
+
+  /** Date them, but say the evidence is mixed. */
+  const flagUnverified = (pks, reason) => {
+    for (const pk of pks) {
+      const acc = t.accounts[pk];
+      if (!acc || acc.baseline) continue;
+      acc.confirmed = false;
+      acc.confirmReason = reason;
+    }
   };
 
   // --- is the baseline settled? ----------------------------------------------
@@ -312,6 +426,35 @@ function ingestSnapshot(run) {
   if (!isFirst && !wasSettled && freshPks.length) {
     // Still filling in. These are recovered misses, not news.
     absorbAll();
+  } else if (wasSettled && headScan && freshPks.length) {
+    // --- head scan: depth is the evidence, not the count --------------------
+    //
+    // A head scan never learns `departed`, so `plausibleNew` collapses to the
+    // bare change in the profile's count. That is not good enough on its own:
+    // an account that follows two people and unfollows two shows a flat count
+    // on every single check, and the count-only rule would absorb every real
+    // new follow into the baseline and report "nobody new" forever. That is
+    // the modal behaviour of a curated account, which is exactly the kind
+    // people watch.
+    //
+    // Depth is better evidence and the scan produces it for free. The previous
+    // scan read down to `prevDepth`. An account sitting above that line now,
+    // which was not recorded then, is one the last scan looked straight at and
+    // did not find — so it arrived in between. Below that line nobody has ever
+    // looked, so a first sighting there is indistinguishable from a miss being
+    // recovered, and goes into the baseline as one.
+    const dated = [];
+    const unseen = [];
+    for (const pk of freshPks) (freshRank[pk] <= prevDepth ? dated : unseen).push(pk);
+    absorb(unseen);
+
+    // The count is kept as corroboration rather than a veto. If far more
+    // accounts turned up above the line than the profile's own count can
+    // explain, something is off and the batch carries the caveat — but it is
+    // still dated, because absorbing it is how arrivals go missing.
+    if (dated.length && plausibleNew != null && dated.length > Math.max(2, plausibleNew * 2)) {
+      flagUnverified(dated, `only ${plausibleNew} of these are accounted for by the profile's count`);
+    }
   } else if (wasSettled) {
     // The baseline is trusted, so the profile's own count is the arbiter.
     if (plausibleNew === 0 && freshPks.length) {
@@ -330,14 +473,10 @@ function ingestSnapshot(run) {
       if (plausibleNew * 2 < arrived) {
         absorbAll();
       } else {
-        const reason = `only ${plausibleNew} of these are accounted for by the profile's count`;
-        for (const pk of freshPks) {
-          const acc = t.accounts[pk];
-          if (acc) {
-            acc.confirmed = false;
-            acc.confirmReason = reason;
-          }
-        }
+        flagUnverified(
+          freshPks,
+          `only ${plausibleNew} of these are accounted for by the profile's count`
+        );
       }
     }
   }
@@ -354,6 +493,12 @@ function ingestSnapshot(run) {
     expectedTotal: curExpected,
     complete: trustworthy,
     full,
+    // What kind of read this was, how far down it looked, and whether it saw
+    // everything it needed to. The next capture reads all three.
+    scope: headScan ? 'head' : 'full',
+    headDepth: headScan ? run.headDepth || run.users.length : null,
+    deepestNewDepth: run.deepestNewDepth != null ? run.deepestNewDepth : null,
+    reliable: run.status === 'complete' && (headScan || full === true),
     arrived,
     departed,
     absorbed,
@@ -456,6 +601,7 @@ function runSummary(run) {
     expectedTotal: run.expectedTotal != null ? run.expectedTotal : null,
     total: run.users.length,
     complete: run.status === 'complete',
+    scope: run.scope || 'full',
     verification: run.verification || null,
     lastErrorKind: run.lastErrorKind || null,
     rateLimitedAt: run.rateLimitedAt || null,
@@ -575,14 +721,21 @@ async function startRun(req) {
     verification: null,
   };
 
-  state.runs.set(runId, run);
-  state.activeRunId = runId;
-  scheduleSave(runId);
-
   // A baseline is the foundation for every later diff: anyone missed here
   // resurfaces as a phantom "new follow" on the next check. Spend more passes
   // on it than on routine re-checks.
-  const isBaseline = !knownId || !state.tracked.has(`${kind}:${knownId}`);
+  const plan = scanPlanFor(kind, knownId, req);
+  // Recorded up front, and only ever narrowed by what the collector reports.
+  // Every later test is written as `scope === 'full'` rather than `!== 'head'`
+  // so that a run whose scope somehow never got set reads as a head scan and
+  // is denied the powers only a full walk has earned.
+  run.scope = plan.mode;
+  run.headDepth = null;
+  run.deepestNewDepth = null;
+
+  state.runs.set(runId, run);
+  state.activeRunId = runId;
+  scheduleSave(runId);
 
   const command = {
     type: 'collect',
@@ -602,7 +755,8 @@ async function startRun(req) {
     // given room converged on its own at five passes and lost nothing. A cap
     // that bites is a cap that loses people, so both sides now get six, and
     // the convergence rule — not the cap — is what ends a capture.
-    maxPasses: isBaseline ? 6 : 4,
+    maxPasses: plan.maxPasses,
+    plan,
   };
   if (knownId) {
     command.targetId = knownId;
@@ -650,6 +804,10 @@ async function resumeRun(req) {
 
   if (req.pageSize) run.pageSize = req.pageSize;
   if (req.delayMs != null) run.delayMs = req.delayMs; // 0 is a valid choice
+  // No scan plan is sent below, so a resume is always a full walk from the
+  // cursor it stopped at. Say so, or a run that began as a head scan would
+  // carry that scope through to a capture that read the whole list.
+  run.scope = 'full';
   run.status = 'starting';
   run.error = null;
   run.warning = null;
@@ -710,6 +868,9 @@ function onCollectStarted(p) {
   const run = state.runs.get(p.runId);
   if (!run) return;
   run.status = 'running';
+  // The collector downgrades a head scan to a full walk when it turns out
+  // there is no reported count to stop against, so take its word from here on.
+  if (p.scope) run.scope = p.scope === 'head' ? 'head' : 'full';
   run.targetId = p.targetId || run.targetId;
   run.targetUsername = p.targetUsername || run.targetUsername;
   // A resumed run skips the profile lookup, so don't wipe the known total.
@@ -793,7 +954,15 @@ function onCollectDone(p) {
   }
   run.status = p.reason === 'complete' ? 'complete' : p.reason === 'aborted' ? 'aborted' : 'partial';
   run.finishedAt = Date.now();
-  if (run.status === 'complete' && run.expectedTotal != null) {
+  // The collector has the last word on scope. A head scan that ran out of list
+  // and walked to the end really is a full capture, whatever was asked for.
+  if (p.scope) run.scope = p.scope === 'head' ? 'head' : 'full';
+  if (p.headDepth != null) run.headDepth = p.headDepth;
+  if (p.deepestNewDepth != null) run.deepestNewDepth = p.deepestNewDepth;
+  // Only a full walk can be "short" — a head scan reads the top on purpose,
+  // and warning that it collected 400 of 1,100 every single time would be
+  // alarming nonsense.
+  if (run.scope === 'full' && run.status === 'complete' && run.expectedTotal != null) {
     const drift = run.expectedTotal - run.users.length;
     // Deliberately looser than captureTolerance(). That decides whether the app
     // TRUSTS the capture, and being strict there is free — an untrusted capture

@@ -126,6 +126,57 @@ These cost real time to discover:
   returned, so captures plateau below it. Never treat an exact match as the
   completion condition.
 
+### Two kinds of read
+
+A **first capture** walks the whole list, several times over, and is the
+foundation every later diff rests on. A **check** does not need to: it only has
+to answer "who is here that wasn't before", and the profile's own reported
+count is an independent oracle for *how many* new accounts to expect. So a
+check reads the top of the list until that count is accounted for and the last
+150 positions have turned up nobody, then stops.
+
+| | requests | at Fast |
+|---|---|---|
+| 1,100 following, full walk | 26-48 | minutes |
+| 1,100 following, check | 3-4 | seconds |
+| 5,000 followers, full walk | ~800 | ~48 min |
+| 5,000 followers, check | ~17 | ~20 s |
+
+The safety property is the count, not the assumption that new follows sit near
+the top. If a check cannot find as many new accounts as the count demands, it
+**escalates in place** — clears the head flag and carries on into the ordinary
+full walk, with everything already read still banked. Nothing is thrown away
+and no second run is started.
+
+And because "new follows appear near the top" is an assumption, it is measured
+rather than trusted: every check records how deep it actually had to go, and
+the floor for the next one grows to three times the deepest of the last five.
+If a target's new follows start showing up further down, its checks follow them
+down.
+
+What a check gives up is **departures**. Proving somebody is absent means
+reading the whole list, so unfollows are only noticed by a full walk — which is
+what "Start a new stalk" on an already-watched account does.
+
+Three fields keep this honest, and they are not interchangeable:
+
+- `scope` — `'full'` or `'head'`. Only `'full'` may mark departures or settle a
+  baseline. Tested positively (`scope === 'full'`), so a run with no scope
+  recorded is treated as the weaker kind.
+- `reliable` — did this capture see what it needed to? True for a satisfied
+  head scan *and* for a complete full walk, because the next capture's arrival
+  confidence depends on coverage-where-it-looked, not on total coverage.
+- `headDepth` — how far down it read. The next check dates an arrival found
+  above that line with confidence, because the previous scan read past that
+  position and did not see it.
+
+That third one is load-bearing. A head scan never learns `departed`, so
+`plausibleNew` collapses to the bare change in the reported count — and an
+account that follows two people and unfollows two shows a *flat* count on every
+check. Deciding on the count alone would absorb every real new follow into the
+baseline and report "nobody new" forever, which is the modal behaviour of
+exactly the curated accounts people watch. Depth is the better evidence.
+
 ### Telling a real follow from a missed one
 
 Because captures can miss people, an account appearing for the first time might

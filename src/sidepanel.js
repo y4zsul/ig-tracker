@@ -58,6 +58,7 @@ const els = {
 
   trackSelect: $('trackSelect'),
   checkBtn: $('checkBtn'),
+  monSpeed: $('monSpeed'),
   monCounts: $('monCounts'),
   monStopBtn: $('monStopBtn'),
   monDeleteBtn: $('monDeleteBtn'),
@@ -868,10 +869,15 @@ function renderControls() {
   els.monStopBtn.hidden = !busy;
   els.checkBtn.disabled = busy || !monKey;
   els.monDeleteBtn.disabled = busy || !monKey;
+  els.monSpeed.disabled = busy;
 
   els.progress.hidden = !busy;
   if (busy) {
-    const known = active.expectedTotal != null && active.expectedTotal > 0;
+    // A head scan reads the top of the list on purpose, so it is never going
+    // to reach the reported total. Showing "400 / 1,103" and then stopping
+    // reads as a capture that broke.
+    const head = active.scope === 'head';
+    const known = !head && active.expectedTotal != null && active.expectedTotal > 0;
     els.progress.classList.toggle('indeterminate', !known);
     els.progressBar.style.width = known
       ? `${Math.min(100, (active.total / active.expectedTotal) * 100).toFixed(1)}%`
@@ -880,12 +886,13 @@ function renderControls() {
     // Pass number matters: a second pass re-walks the whole list from the top,
     // so without this the progress bar appears to restart for no reason.
     const passNote = active.pass > 0 ? ` · re-check ${active.pass + 1}` : '';
-    els.status.textContent =
-      (known
-        ? `Reading ${active.kind} of ${who}: ${nf.format(active.total)} / ${nf.format(
-            active.expectedTotal
-          )}`
-        : `Reading ${active.kind} of ${who}: ${nf.format(active.total)} so far`) + passNote;
+    els.status.textContent = head
+      ? `Checking the top of ${who}'s ${active.kind}: ${nf.format(active.total)} read`
+      : (known
+          ? `Reading ${active.kind} of ${who}: ${nf.format(active.total)} / ${nf.format(
+              active.expectedTotal
+            )}`
+          : `Reading ${active.kind} of ${who}: ${nf.format(active.total)} so far`) + passNote;
   } else if (!els.status.dataset.sticky) {
     els.status.textContent = '';
   }
@@ -1162,8 +1169,18 @@ function setStatus(text, sticky) {
   else delete els.status.dataset.sticky;
 }
 
-async function beginCapture(usernameOrId, kind) {
-  const speed = SPEEDS[els.speed.value] || SPEEDS.safe;
+/**
+ * @param opts.speedKey which pacing control to obey. The Monitor screen has
+ *   its own, because a check is a handful of requests where a first capture is
+ *   hundreds — reading the New stalk screen's setting there meant every check
+ *   ran at Safe whether or not the user had ever seen that screen.
+ * @param opts.quick ask for a head scan: read the top of the list until the
+ *   profile's own count is accounted for, rather than walking the whole thing.
+ */
+async function beginCapture(usernameOrId, kind, opts) {
+  const o = opts || {};
+  const sel = o.speedKey === 'mon' ? els.monSpeed.value : els.speed.value;
+  const speed = SPEEDS[sel] || SPEEDS.safe;
   els.alert.hidden = true;
   els.doneMsg.hidden = true;
   setStatus('Resolving…', true);
@@ -1174,6 +1191,7 @@ async function beginCapture(usernameOrId, kind) {
     username: usernameOrId,
     pageSize: speed.pageSize,
     delayMs: speed.delayMs,
+    quick: !!o.quick,
   });
 
   if (!res.ok) {
@@ -1204,7 +1222,7 @@ async function checkNow() {
   if (!monKey || !monData) return;
   const s = monData.summary;
   pendingCheck = monKey;
-  await beginCapture(s.targetId || s.username, s.kind);
+  await beginCapture(s.targetId || s.username, s.kind, { speedKey: 'mon', quick: true });
 }
 
 async function stopCapture() {

@@ -66,6 +66,13 @@
           </button>
         </div>
         <div class="row check-row">
+          <select id="monSpeed" aria-label="Pacing">
+            <option value="safe">Safe: slowest, least likely to be throttled</option>
+            <option value="fast" selected>Fast</option>
+            <option value="max">Max: no delay between pages</option>
+          </select>
+        </div>
+        <div class="row check-row">
           <button id="checkBtn" class="primary grow big-action">Check now</button>
           <button id="monStopBtn" hidden>Stop</button>
         </div>
