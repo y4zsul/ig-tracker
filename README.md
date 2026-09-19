@@ -90,8 +90,18 @@ These cost real time to discover:
   If the server ever ignores an offset it did not hand out, it answers with the
   window it wanted to send, so the page comes back a near-copy of the previous
   one. Two of those in a row and the walk stops sliding and follows
-  `next_max_id` — lossier, but never a loop. `/followers/` returns an opaque
-  token rather than an offset, so it cannot be slid and still relies on passes.
+  `next_max_id` — lossier, but never a loop.
+- **An all-digits cursor is not necessarily an offset.** `/followers/` returns
+  opaque tokens, and plenty of them are long runs of digits (`17841400…`).
+  Deciding a cursor was slidable by testing whether it *looked* numeric shipped
+  in 7.5.0 and broke every followers capture on its second request: the walk
+  computed `max_id=50` from a token and sent Instagram a cursor it had never
+  issued, which it refuses outright.
+
+  What makes an offset an offset is that it is a **row position**, so it
+  advances by at most the page size just requested. An opaque token jumps by an
+  arbitrary amount. Test the step, not the spelling. A token that fails the test
+  falls back to plain cursor-following, which is all `/followers/` ever had.
 - **A completion tolerance is a completion target.** The walk used to stop once
   it was within 2% of the reported count, so a 1,100-following account reliably
   finished ~22 people short and handed those 22 to the next check as "new
