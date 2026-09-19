@@ -110,6 +110,27 @@ function migrateSettled(t) {
   scheduleSave(null);
 }
 
+/**
+ * How far below the profile's reported count a capture may land and still count
+ * as having got everything.
+ *
+ * The gap that genuinely cannot be closed is deactivated and deleted accounts:
+ * Instagram counts them in the profile total and never lists them, so demanding
+ * an exact match would mark every capture incomplete forever. Everything else
+ * in the gap is a miss.
+ *
+ * This used to be 2%, which on a 1,100-following account meant twenty-two
+ * people could go missing and the capture still called itself whole — and
+ * because the collector stopped on the same rule, 2% stopped being a tolerance
+ * and became a target. It must stay in step with the collector's own tolerance
+ * in interceptor.js: if the differ is stricter the walk stops at a point the
+ * differ then calls short, and if it is looser the baseline settles on a
+ * capture that was missing people, which dates them as new follows later.
+ */
+function captureTolerance(expectedTotal) {
+  return Math.max(1, expectedTotal * 0.005);
+}
+
 // --- persistence -------------------------------------------------------------
 
 const pending = new Set();
@@ -182,8 +203,7 @@ function ingestSnapshot(run) {
   // with the reported count: that count includes deactivated and deleted
   // accounts which are counted but never listed, so lists plateau below it.
   const drift = run.expectedTotal != null ? run.expectedTotal - run.users.length : null;
-  const full =
-    drift == null ? null : Math.abs(drift) <= Math.max(5, run.expectedTotal * 0.02);
+  const full = drift == null ? null : Math.abs(drift) <= captureTolerance(run.expectedTotal);
 
   // An account "arriving" is only believable if the PREVIOUS capture was good
   // enough to have seen it. After a short capture, a first sighting is just as
@@ -299,14 +319,24 @@ function ingestSnapshot(run) {
       // was there all along.
       absorbAll();
     } else if (plausibleNew != null && arrived > plausibleNew) {
-      // Some are real and some are misses, with no way to tell which, so the
-      // whole batch carries the caveat.
-      const reason = `only ${plausibleNew} of these are accounted for by the profile's count`;
-      for (const pk of freshPks) {
-        const acc = t.accounts[pk];
-        if (acc) {
-          acc.confirmed = false;
-          acc.confirmReason = reason;
+      // Some are real and some are misses, with no way to tell which.
+      //
+      // When most of the batch cannot be real, dating it is the worse error by
+      // a wide margin: fifty rows stamped with today's date, of which at most
+      // three happened today, is exactly the "it reported a pile of new follows
+      // that were never new" complaint. Losing three real dates is cheaper than
+      // inventing forty-seven, so a batch that is majority recovery goes into
+      // the baseline whole.
+      if (plausibleNew * 2 < arrived) {
+        absorbAll();
+      } else {
+        const reason = `only ${plausibleNew} of these are accounted for by the profile's count`;
+        for (const pk of freshPks) {
+          const acc = t.accounts[pk];
+          if (acc) {
+            acc.confirmed = false;
+            acc.confirmReason = reason;
+          }
         }
       }
     }
@@ -561,16 +591,18 @@ async function startRun(req) {
     pageSize: run.pageSize,
     delayMs: run.delayMs,
     maxUsers: MAX_USERS_PER_RUN,
-    // A backstop, not a target. The walk exits on diminishing returns long
-    // before this, so raising it further only lengthens the tail on the lists
-    // that are hardest to finish. Recovering the last stragglers is the job of
-    // the next check, which sees a properly different shuffle and folds what
-    // it finds into the baseline rather than dating it.
+    // A backstop, not a target — the walk converges and stops well before it
+    // on any list it can finish.
     //
-    // Followers gets fewer: it is capped at 25 rows a page against 200 for
-    // following, so the same list costs eight times the requests and eight
-    // times the wait, and an extra pass there is minutes rather than seconds.
-    maxPasses: kind === 'followers' ? (isBaseline ? 3 : 2) : isBaseline ? 6 : 4,
+    // /followers/ used to get half of /following/'s budget, because its pages
+    // hold 25 rows against 200 and an extra pass costs minutes rather than
+    // seconds. Simulated against a list that re-ranks between requests, that
+    // budget was not a backstop at all: the followers walk was still finding
+    // people when it hit the cap and stopped 3-4% short, while the same walk
+    // given room converged on its own at five passes and lost nothing. A cap
+    // that bites is a cap that loses people, so both sides now get six, and
+    // the convergence rule — not the cap — is what ends a capture.
+    maxPasses: isBaseline ? 6 : 4,
   };
   if (knownId) {
     command.targetId = knownId;
@@ -632,6 +664,10 @@ async function resumeRun(req) {
     pageSize: run.pageSize,
     delayMs: run.delayMs,
     maxUsers: MAX_USERS_PER_RUN,
+    // Without this a resumed run fell back to the collector's default of 3
+    // passes, so a capture that was interrupted quietly got a smaller pass
+    // budget than the one it started with.
+    maxPasses: state.tracked.has(`${run.kind}:${run.targetId}`) ? 4 : 6,
     resumeCursor: run.lastCursor || null,
     startPageIndex: run.pageCount || 0,
   };
@@ -759,8 +795,11 @@ function onCollectDone(p) {
   run.finishedAt = Date.now();
   if (run.status === 'complete' && run.expectedTotal != null) {
     const drift = run.expectedTotal - run.users.length;
-    // A small gap is normal (deleted/deactivated accounts are counted but not
-    // listed); a large one means pages were lost.
+    // Deliberately looser than captureTolerance(). That decides whether the app
+    // TRUSTS the capture, and being strict there is free — an untrusted capture
+    // just means nothing gets dated yet. This decides whether to alarm the
+    // person, and a handful of deactivated accounts is not worth alarming
+    // anyone over.
     if (Math.abs(drift) > Math.max(5, run.expectedTotal * 0.02)) {
       run.warning = `Collected ${run.users.length} but the profile reports ${run.expectedTotal}. Some pages may be missing.`;
     }

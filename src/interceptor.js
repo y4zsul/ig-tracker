@@ -1025,6 +1025,42 @@
       let tokenCursor = false;
       let emptyStreak = 0;
 
+      // --- overlapping windows --------------------------------------------
+      //
+      // /following/ pages by POSITIONAL OFFSET over a ranking Instagram
+      // recomputes for every single request. Walking it with back-to-back
+      // windows — [0,200), [200,400), [400,600) — loses people structurally:
+      // an account sitting at position 250 when the first window is served,
+      // which drifts to position 150 before the second request goes out, was
+      // behind the boundary when it passed and in front of it afterwards. It
+      // is never returned at all. Nobody dropped a page; the boundary ate them.
+      //
+      // Re-walking cannot fix that, because every re-walk puts the boundaries
+      // back in exactly the same places. That is why captures kept landing at
+      // 900 of 1,100 no matter how many passes they burned, and why the rest
+      // only turned up on a later check, when Instagram's ranking had moved
+      // enough to shake a few of them loose.
+      //
+      // The fix is to stop asking for adjacent windows. Request 200 rows every
+      // STRIDE positions instead, so consecutive windows overlap: an account
+      // now has to move more than (pageSize - stride) places between two
+      // consecutive requests to slip through both. At 200/120 that is 80
+      // places, against 1 before. It costs about 1.7x the requests of a pass,
+      // and saves far more than that by making the pass actually converge
+      // rather than needing four more that each recover a handful.
+      //
+      // The ratio changes per pass so that even the boundaries that remain
+      // land somewhere different each time round.
+      const strideFor = (p) => {
+        const ratios = [0.5, 0.35, 0.6, 0.4];
+        return Math.max(10, Math.round(pageSize * ratios[p % ratios.length]));
+      };
+      // Only /following/ hands back arithmetic offsets. /followers/ returns an
+      // opaque token, which cannot be slid, and this stays false there.
+      let slidingOff = false; // set if the server turns out to ignore our offsets
+      let stallStreak = 0;
+      let prevPagePks = null;
+
       for (;;) {
         if (run.aborted) {
           post({ type: 'collect:done', runId: run.id, reason: 'aborted', pages: pageIndex, total });
@@ -1136,10 +1172,54 @@
           // can return an opaque token. Demanding a number here killed the
           // followers walk after one page. Accept any cursor, and only require
           // that it actually moves and has not been seen before this pass.
-          const looped = next === cursor || seenCursors.has(next);
+          const offsetLike = /^\d+$/.test(String(next)) && /^\d*$/.test(String(cursor || ''));
+          const curOff = Number(cursor || 0);
+          let advanceTo = next;
+
+          if (offsetLike && !slidingOff) {
+            // Overlap the next window with the one just served. Clamped to the
+            // server's own next offset so a shorter list is never overshot.
+            //
+            // The very first step is a HALF stride. Sliding gives every
+            // position two looks except the first `stride` of them, because
+            // there is no earlier window to overlap with — and those are the
+            // most recently followed accounts, the ones the whole app is about.
+            // Half-stepping once at the top halves that blind spot for the cost
+            // of one extra request per pass.
+            const stride = strideFor(pass);
+            const step = cursor == null ? Math.max(1, Math.round(stride / 2)) : stride;
+            advanceTo = String(Math.min(Math.max(curOff + 1, curOff + step), Number(next)));
+
+            // Sliding assumes the offset means what it says. If Instagram ever
+            // ignores an offset it did not itself hand out, it answers with the
+            // window it wanted to send instead, and the page comes back as a
+            // near-copy of the one before it. Two of those in a row and we stop
+            // sliding and follow the server's cursor, which is the old
+            // behaviour — lossier, but never a loop.
+            const pks = users.map((u) => u.pk).filter(Boolean);
+            if (prevPagePks && pks.length && prevPagePks.length) {
+              const before = new Set(prevPagePks);
+              let same = 0;
+              for (const pk of pks) if (before.has(pk)) same++;
+              const repeat = same >= pks.length * 0.9 && pks.length >= prevPagePks.length * 0.9;
+              stallStreak = repeat ? stallStreak + 1 : 0;
+              if (stallStreak >= 2) {
+                slidingOff = true;
+                advanceTo = next;
+                post({
+                  type: 'collect:warn',
+                  runId: run.id,
+                  message: 'Instagram is ignoring page offsets; falling back to plain paging.',
+                });
+              }
+            }
+            prevPagePks = pks;
+          }
+
+          const looped = advanceTo === cursor || seenCursors.has(advanceTo);
           const bothNumeric =
-            Number.isFinite(Number(next)) && Number.isFinite(Number(cursor || 0));
-          const wentBackwards = bothNumeric && Number(next) <= Number(cursor || 0);
+            Number.isFinite(Number(advanceTo)) && Number.isFinite(Number(cursor || 0));
+          const wentBackwards = bothNumeric && Number(advanceTo) <= Number(cursor || 0);
 
           if (looped || wentBackwards) {
             // As far as the server will page. Not an error — end the pass so
@@ -1148,7 +1228,7 @@
             post({
               type: 'collect:warn',
               runId: run.id,
-              message: `Instagram stopped paging after ${total} of ${
+              message: `Instagram stopped paging after ${unionSet.size} of ${
                 expectedTotal != null ? expectedTotal : '?'
               }.`,
             });
@@ -1157,11 +1237,13 @@
             // position, which makes it immune to the re-ranking skip that
             // offset paging suffers. Walks like that converge in one pass, so
             // they need far less re-walking.
-            if (!Number.isFinite(Number(next))) tokenCursor = true;
-            seenCursors.add(next);
-            cursor = next;
+            if (!Number.isFinite(Number(advanceTo))) tokenCursor = true;
+            seenCursors.add(advanceTo);
+            cursor = advanceTo;
 
-            if (total >= maxUsers) {
+            // Unique accounts, not rows served. Overlapping windows serve most
+            // positions twice, so `total` is no longer a count of anything.
+            if (unionSet.size >= maxUsers) {
               post({ type: 'collect:done', runId: run.id, reason: 'limit', pages: pageIndex, total });
               return;
             }
@@ -1205,19 +1287,45 @@
         // roughly eight times the requests and eight times the wait for the
         // same list, and it should give up on stragglers correspondingly
         // sooner.
-        const rate = pageSize >= 100 ? 0.002 : 0.01;
-        const negligible = known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
+        //
+        // That reasoning only holds once the capture is basically there. While
+        // it is still MATERIALLY short — the 900-of-1,100 case people keep
+        // reporting — "this pass found almost nobody" is not a reason to stop.
+        // It is a reason to run the next pass, which uses a different stride
+        // and therefore different window boundaries, and so looks in places
+        // this one structurally could not. So the bar drops to literally zero
+        // while a large chunk of the list is still missing.
+        const shortfall = known ? (expectedTotal - unionSet.size) / expectedTotal : 0;
+        const materiallyShort = shortfall > 0.01;
+        const rate = materiallyShort ? 0 : pageSize >= 100 ? 0.002 : 0.01;
+        const negligible = rate === 0 ? 0 : known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
         quiet = marginal <= negligible ? quiet + 1 : 0;
         // Never wait for union === expectedTotal: that count includes
         // deactivated accounts which are counted but never returned, so many
         // targets plateau permanently below it and would walk forever.
         //
-        // Match the tolerance the diffing side uses to call a capture full.
-        // A walk that has everything bar a rounding error is finished, and
-        // demanding an exact match is what made a clean 1,098-of-1,100 capture
-        // burn extra passes chasing people Instagram is never going to return.
-        const tolerance = known ? Math.max(5, expectedTotal * 0.02) : 0;
-        const effectivelyComplete = known && union >= expectedTotal - tolerance;
+        // This used to sit at 2%, matching the tolerance the diffing side uses
+        // to call a capture full — which quietly made 2% a TARGET. Simulated
+        // against a re-ranking list the walk stopped the instant it crossed
+        // 98%, every time, so a 1,100-following account reliably finished 20
+        // people short and handed those 20 to the next check as "new". Two per
+        // cent of a list is not a rounding error, it is twenty accounts.
+        //
+        // The gap that genuinely cannot be closed is deactivated and deleted
+        // accounts: Instagram counts them in the profile total and never
+        // returns them in the list, so an exact match is impossible and
+        // demanding one would walk forever. Half a per cent covers that; the
+        // quiet-pass rule below is what stops the walk on anything larger.
+        const tolerance = known ? Math.max(1, expectedTotal * 0.005) : 0;
+        // Reaching the reported count is the only self-evident finish; there is
+        // nobody left to find. Short of that, a near-complete FIRST pass is not
+        // proof of anything — it is one look at a list that moves while you
+        // read it. Anything inside the tolerance still earns a second pass,
+        // which walks with a different stride and so looks between the seams
+        // the first one left. That second pass is where the last handful comes
+        // from, and it is the difference between "1,095 of 1,100" and "1,100".
+        const effectivelyComplete =
+          known && union >= expectedTotal - (pass >= 2 ? tolerance : 0);
         // Otherwise be stubborn: a pass that finds nobody new is NOT proof the
         // list is whole — measured runs go 746, 766, 771, 774, 774, and two
         // identical walks have agreed on 252 of 253 while a third found the
@@ -1233,7 +1341,11 @@
         // following lists do. The cursor being opaque is not evidence that it
         // is record-anchored, and one quiet pass is thin proof either way, so
         // a short list now earns a second pass regardless of cursor type.
-        const quietNeeded = short ? 2 : 1;
+        //
+        // With no reported count to check against there is nothing that can
+        // call a capture complete, so an unknown total earns the same second
+        // pass a known-short one does rather than stopping on one quiet walk.
+        const quietNeeded = !known || short ? 2 : 1;
         const done = pass >= maxPasses || effectivelyComplete || quiet >= quietNeeded;
 
         if (!done) {
@@ -1271,6 +1383,12 @@
         cursor = null;
         seenCursors = new Set();
         emptyStreak = 0;
+        // Per-pass: the next pass starts at offset 0 again, so the first page
+        // legitimately repeats this pass's first page and must not read as the
+        // server ignoring us. `slidingOff` is deliberately NOT reset — once the
+        // server has shown it won't honour our offsets, that holds for the run.
+        prevPagePks = null;
+        stallStreak = 0;
         if (!(await sleepAbortable(2000 + Math.random() * 2000, run))) {
           post({ type: 'collect:done', runId: run.id, reason: 'aborted', pages: pageIndex, total });
           return;

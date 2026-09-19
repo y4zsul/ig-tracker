@@ -63,11 +63,16 @@ So these three will wipe everything, and there's no undo:
 If you're unsure it worked, the version number is at the bottom of the home
 screen. It should match the release you just downloaded.
 
-**Worth re-running your watches after an update.** Captures have got
-considerably better at not missing people, and an old baseline was built by the
-older, leakier version. Open **Start a new stalk** on anyone you're already
-watching and run it again — anything the better capture turns up gets folded
-into the baseline rather than reported as a pile of new follows.
+**Re-run your watches after this update.** Captures used to walk the list in
+back-to-back chunks, and because Instagram reshuffles the list between
+requests, people could slip across a chunk boundary and never be read at all.
+They turned up on a later check instead, in a batch, looking like new follows.
+Captures now overlap their chunks so there is no boundary to slip across.
+
+An old baseline was still built by the older, leakier version, so it is worth
+rebuilding: open **Start a new stalk** on anyone you're already watching and run
+it again. Anything the better capture turns up gets folded into the baseline
+rather than reported as a pile of new follows, and your existing dates are kept.
 
 ## Things worth knowing
 

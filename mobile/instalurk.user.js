@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         InstaLurk
 // @namespace    https://github.com/y4zsul/ig-tracker
-// @version      2.3.1
+// @version      2.4.0
 // @description  See who doesn't follow you back, track who an account starts following, compare two accounts, and watch stories without sending a seen receipt. Runs entirely on your own device, in your own Instagram session.
 // @author       y4zsul
 // @match        https://www.instagram.com/*
@@ -341,6 +341,25 @@
     // check, which sees a properly different shuffle.
     const maxPasses = 6;
 
+    // --- overlapping windows ----------------------------------------------
+    //
+    // /following/ pages by POSITIONAL OFFSET over a ranking Instagram
+    // recomputes for every request. Walking it with back-to-back windows —
+    // [0,200), [200,400) — loses people structurally: an account at position
+    // 250 when the first window is served, which drifts to 150 before the
+    // second request goes out, was behind the boundary when it passed and in
+    // front of it afterwards, so it is never returned. Re-walking cannot fix
+    // that, because every re-walk rebuilds the boundaries in the same places.
+    //
+    // So overlap them. Ask for a full page every STRIDE positions and an
+    // account has to move more than (pageSize - stride) places between two
+    // consecutive requests to slip through both. The ratio changes per pass so
+    // the seams that remain land somewhere different each time.
+    const strideFor = (p) => {
+      const ratios = [0.5, 0.35, 0.6, 0.4];
+      return Math.max(10, Math.round(pageSize * ratios[p % ratios.length]));
+    };
+
     const union = new Map();
     let pass = 0;
     let quiet = 0;
@@ -348,11 +367,16 @@
     let tokenCursor = false;
     let rateRetries = 0;
     let reachedEnd = false;
+    // Once the server shows it won't honour an offset it did not hand out,
+    // that holds for the rest of the capture.
+    let slidingOff = false;
 
     while (pass < maxPasses) {
       let cursor = null;
       const seen = new Set();
       let emptyStreak = 0;
+      let prevPagePks = null;
+      let stallStreak = 0;
 
       for (;;) {
         if (run.aborted) return { users: [...union.values()], aborted: true, reachedEnd };
@@ -403,13 +427,46 @@
           reachedEnd = true;
           break;
         }
-        if (next === cursor || seen.has(next)) break;
-        const bothNumeric = Number.isFinite(Number(next)) && Number.isFinite(Number(cursor || 0));
-        if (bothNumeric && Number(next) <= Number(cursor || 0)) break;
-        if (!Number.isFinite(Number(next))) tokenCursor = true;
+        const offsetLike = /^\d+$/.test(next) && /^\d*$/.test(String(cursor || ''));
+        const curOff = Number(cursor || 0);
+        let advanceTo = next;
 
-        seen.add(next);
-        cursor = next;
+        if (offsetLike && !slidingOff) {
+          // Overlap the next window with the one just served, clamped to the
+          // server's own next offset so a short list is never overshot. The
+          // first step is a HALF stride: sliding gives every position two looks
+          // except the first `stride` of them, because there is no earlier
+          // window to overlap with, and those are the most recent follows.
+          const stride = strideFor(pass);
+          const step = cursor == null ? Math.max(1, Math.round(stride / 2)) : stride;
+          advanceTo = String(Math.min(Math.max(curOff + 1, curOff + step), Number(next)));
+
+          // If Instagram ever ignores an offset it did not itself hand out it
+          // answers with the window it wanted to send, so the page comes back a
+          // near-copy of the one before. Two of those and we stop sliding.
+          const pks = json.users.map((r) => String((r && (r.pk != null ? r.pk : r.pk_id != null ? r.pk_id : r.id)) || '')).filter(Boolean);
+          if (prevPagePks && pks.length && prevPagePks.length) {
+            const before = new Set(prevPagePks);
+            let same = 0;
+            for (const p of pks) if (before.has(p)) same++;
+            const repeat = same >= pks.length * 0.9 && pks.length >= prevPagePks.length * 0.9;
+            stallStreak = repeat ? stallStreak + 1 : 0;
+            if (stallStreak >= 2) {
+              slidingOff = true;
+              advanceTo = next;
+            }
+          }
+          prevPagePks = pks;
+        } else if (!Number.isFinite(Number(next))) {
+          tokenCursor = true;
+        }
+
+        if (advanceTo === cursor || seen.has(advanceTo)) break;
+        const bothNumeric = Number.isFinite(Number(advanceTo)) && Number.isFinite(Number(cursor || 0));
+        if (bothNumeric && Number(advanceTo) <= Number(cursor || 0)) break;
+
+        seen.add(advanceTo);
+        cursor = advanceTo;
         await sleep(baseDelay + Math.random() * baseDelay * 0.5);
       }
 
@@ -428,16 +485,32 @@
       // The bar scales with what a pass costs: followers is capped at 25 rows
       // a page against 200 for following, so that walk is eight times the
       // requests for the same list and should give up on stragglers sooner.
-      const rate = pageSize >= 100 ? 0.002 : 0.01;
-      const negligible = known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
+      //
+      // That only holds once the capture is basically there. While it is still
+      // MATERIALLY short, "this pass found almost nobody" is not a reason to
+      // stop; it is a reason to run the next pass, which uses a different
+      // stride and looks between the seams this one could not. So the bar drops
+      // to zero while a chunk of the list is still missing.
+      const shortfall = known ? (expectedTotal - union.size) / expectedTotal : 0;
+      const materiallyShort = shortfall > 0.01;
+      const rate = materiallyShort ? 0 : pageSize >= 100 ? 0.002 : 0.01;
+      const negligible = rate === 0 ? 0 : known ? Math.max(1, Math.round(expectedTotal * rate)) : 1;
       quiet = marginal <= negligible ? quiet + 1 : 0;
 
-      // Match the tolerance the diffing side uses to call a capture full:
-      // deactivated accounts are counted in the reported total but never
-      // listed, so demanding an exact match burns passes chasing people
-      // Instagram will never return.
-      const tolerance = known ? Math.max(5, expectedTotal * 0.02) : 0;
-      const effectivelyComplete = known && union.size >= expectedTotal - tolerance;
+      // This used to sit at 2%, matching the tolerance the diffing side uses to
+      // call a capture full — which quietly made 2% a TARGET, so a 1,100-follow
+      // list reliably finished twenty people short and handed those twenty to
+      // the next check as "new". Deactivated accounts are counted in the
+      // reported total and never listed, so some slack is unavoidable, but half
+      // a per cent covers that.
+      //
+      // Reaching the reported count is the only self-evident finish. Short of
+      // it, a near-complete FIRST pass is one look at a list that moves while
+      // you read it, so anything inside the tolerance still earns a second
+      // pass — and that pass is where the last handful comes from.
+      const tolerance = known ? Math.max(1, expectedTotal * 0.005) : 0;
+      const effectivelyComplete =
+        known && union.size >= expectedTotal - (pass >= 2 ? tolerance : 0);
       if (effectivelyComplete) break;
 
       // One quiet pass used to be enough for an opaque cursor, on the reasoning
@@ -445,8 +518,11 @@
       // up short the same way following lists do, and an opaque cursor is not
       // evidence of being record-anchored, so a short list earns a second pass
       // whatever the cursor type.
+      // With no reported count there is nothing that can call a capture
+      // complete, so an unknown total earns the same second pass a known-short
+      // one does rather than stopping on a single quiet walk.
       const short = known && !effectivelyComplete;
-      if (quiet >= (short ? 2 : 1)) break;
+      if (quiet >= (!known || short ? 2 : 1)) break;
       if (pass < maxPasses) await sleep(1500);
     }
 
@@ -578,7 +654,12 @@
     }
 
     const drift = expectedTotal != null ? expectedTotal - users.length : null;
-    const full = drift == null ? null : Math.abs(drift) <= Math.max(5, expectedTotal * 0.02);
+    // Half a per cent, not two. Two per cent of a 1,100-follow list is
+    // twenty-two people, and calling a capture that missed twenty-two people
+    // "full" settles the baseline on it — which dates those twenty-two as new
+    // follows the next time they turn up. Must stay in step with the walk's own
+    // tolerance in walkList().
+    const full = drift == null ? null : Math.abs(drift) <= Math.max(1, expectedTotal * 0.005);
 
     let arrived = fresh.length;
     let absorbed = 0;
@@ -615,7 +696,13 @@
 
       if (plausibleNew === 0 && fresh.length) absorbAll();
       else if (plausibleNew != null && arrived > plausibleNew) {
-        for (const p of fresh) t.accounts[p].c = 0;
+        // Some are real and some are recovered misses, with no way to tell
+        // which. When most of the batch cannot be real, dating it is the worse
+        // error by a wide margin — fifty rows stamped with today, of which at
+        // most three happened today. Losing three real dates beats inventing
+        // forty-seven, so a majority-recovery batch goes into the baseline.
+        if (plausibleNew * 2 < arrived) absorbAll();
+        else for (const p of fresh) t.accounts[p].c = 0;
       }
     }
 

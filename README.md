@@ -71,10 +71,39 @@ These cost real time to discover:
 - **`next_max_id` is a positional offset** (`"200"`, `"400"`), not a cursor, and
   there's no `has_more`. A **short page is normal** — a 197-row page still
   advances the offset by 200 — so the only valid terminator is an absent cursor.
-- **One pass is not enough.** Instagram re-ranks between requests, so a walk
-  skips people who drift behind the read head and repeats people who drift
-  forward. The collector re-walks and unions until passes stop finding anyone
-  new. Measured convergence: `746 → 766 → 771 → 774 → 774`.
+- **Adjacent windows lose people, and re-walking does not fix it.** Instagram
+  re-ranks between requests, so an account sitting at position 250 when
+  `[0,200)` is served, which drifts to 150 before `[200,400)` goes out, was
+  behind the boundary when it passed and in front of it afterwards — it is
+  never returned at all. Every re-walk rebuilds the boundaries in the same
+  places, which is why extra passes recovered so little.
+
+  The collector therefore **overlaps its windows**: it asks for `count=200`
+  every `stride` positions (50% of a page on the first pass, 35/60/40% after),
+  by setting `max_id` itself rather than following `next_max_id`. An account now
+  has to move more than `pageSize - stride` places between two consecutive
+  requests to escape both windows. The first step is a half stride, because the
+  top of the list has no earlier window to overlap with. Simulated against a
+  list that re-ranks between every request, adjacent windows captured 98.0-99.6%
+  and overlapping ones captured 100% in 25 of 25 runs.
+
+  If the server ever ignores an offset it did not hand out, it answers with the
+  window it wanted to send, so the page comes back a near-copy of the previous
+  one. Two of those in a row and the walk stops sliding and follows
+  `next_max_id` — lossier, but never a loop. `/followers/` returns an opaque
+  token rather than an offset, so it cannot be slid and still relies on passes.
+- **A completion tolerance is a completion target.** The walk used to stop once
+  it was within 2% of the reported count, so a 1,100-following account reliably
+  finished ~22 people short and handed those 22 to the next check as "new
+  follows". The tolerance is now 0.5%, and it only applies from the second pass
+  — reaching the reported count exactly is the only finish a single pass can
+  claim. `captureTolerance()` in `background.js` must stay in step with it: too
+  strict there and the walk stops at a point the differ calls short, too loose
+  and the baseline settles on a capture that was missing people.
+- **Passes converge on their own; the cap should not bite.** Measured
+  convergence: `746 → 766 → 771 → 774 → 774`. `/followers/` was capped at 3
+  passes to save time and was still finding people when it hit the cap, ending
+  3-4% short; given six it converged at five and lost nothing.
 - **`/following/` serves 200 per page; `/followers/` is capped at 25.** Followers
   lists therefore have ~8× more page boundaries and are structurally more
   miss-prone.
